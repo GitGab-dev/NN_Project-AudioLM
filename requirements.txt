@@ -1,0 +1,10 @@
+notebook
+numpy
+torch
+torchaudio
+lightning
+soundfile
+progressbar
+matplotlib
+tqdm
+

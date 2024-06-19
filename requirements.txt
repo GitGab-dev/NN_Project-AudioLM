@@ -7,4 +7,5 @@ soundfile
 progressbar
 matplotlib
 tqdm
+soundstream
 

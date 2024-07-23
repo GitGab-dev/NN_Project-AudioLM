@@ -7,4 +7,6 @@ soundfile
 progressbar
 matplotlib
 tqdm
-
+huggingface-hub
+transformers>=4.37.2
+scikit-learn

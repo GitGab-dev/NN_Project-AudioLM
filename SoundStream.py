@@ -297,9 +297,9 @@ def soundstream_16khz(pretrained=False, **kwargs):
     model.eval()
     return model
 
-def encode_audio(audioWave, sampleRate, model, start = 0, duration = 3):
+def encode_audio(audio_wave, sample_rate, model, start = 0, duration = 3):
     
-	x, sr = torchaudio.functional.resample(audioWave, sampleRate, 16000), 16000
+	x, sr = torchaudio.functional.resample(audio_wave, sample_rate, 16000), 16000
 
 	x = x[:, start*16000:(start + duration)*16000]
     
@@ -325,24 +325,34 @@ def prepare_acoustic_tokens(y, Q = 8, N = 1024):
 
     
 def divide_tokens(full_token_list, Q = 8, Q_prime = 3):
-	size = full_token_list.numel()
-	num_rows = size // Q
-	full_token_matrix = full_token_list.reshape(num_rows, Q)
-	
-	coarse_token_matrix = full_token_matrix[:, :Q_prime]
-	fine_token_matrix = full_token_matrix[:, Q_prime:] 
-	
-	coarse_token_list = coarse_token_matrix.reshape(-1)
-	fine_token_list = fine_token_matrix.reshape(-1)
-    
-	return coarse_token_list, fine_token_list
+    size = full_token_list.numel()
+    num_rows = size // Q
+    full_token_matrix = full_token_list.reshape(num_rows, Q)
+    coarse_token_matrix = full_token_matrix[:, :Q_prime]
+    fine_token_matrix = full_token_matrix[:, Q_prime:]
+    coarse_token_list = coarse_token_matrix.reshape(-1)
+    fine_token_list = fine_token_matrix.reshape(-1)
+    return coarse_token_list, fine_token_list
 
-def audio_to_tokens(audioWave, sampleRate, model, start = 0, duration = 3, Q_prime = 3):
+def audio_to_tokens(audio_wave, sample_rate, model, start = 0, duration = 3, Q_prime = 3):
 
-    y = encode_audio(audioWave, sampleRate, model, start, duration)
+    y = encode_audio(audio_wave, sample_rate, model, start, duration)
     full_token_list, _ = prepare_acoustic_tokens(y)
     
     return divide_tokens(full_token_list, 8, Q_prime)
+
+def tokens_to_audio(coarse_tokens, fine_tokens, model, removeOffsets = True, Q = 8, Q_prime = 3, N = 1024):
+    
+    coarse_shaped, fine_shaped = coarse_tokens.reshape((-1,Q_prime)),fine_tokens.reshape((-1,Q - Q_prime))
+    embedding = torch.hstack((coarse_shaped, fine_shaped))
+
+    if removeOffsets:
+        size = coarse_tokens.shape[0] + fine_tokens.shape[0]
+        offsets = torch.tensor([(i % Q) * N for i in range(size)]).reshape((-1,Q))
+        print(embedding.shape, offsets.shape)
+        embedding = (embedding - offsets).reshape((1,-1,Q))
+    
+    return decode_audio(embedding, model)
     
     
     

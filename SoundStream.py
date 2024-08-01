@@ -297,10 +297,9 @@ def soundstream_16khz(pretrained=False, **kwargs):
     model.eval()
     return model
 
-def encode_audio(audio, model, start = 0, duration = 3):
+def encode_audio(audioWave, sampleRate, model, start = 0, duration = 3):
     
-	x, sr = torchaudio.load(audio)
-	x, sr = torchaudio.functional.resample(x, sr, 16000), 16000
+	x, sr = torchaudio.functional.resample(audioWave, sampleRate, 16000), 16000
 
 	x = x[:, start*16000:(start + duration)*16000]
     
@@ -337,4 +336,13 @@ def divide_tokens(full_token_list, Q = 8, Q_prime = 3):
 	fine_token_list = fine_token_matrix.reshape(-1)
     
 	return coarse_token_list, fine_token_list
+
+def audio_to_tokens(audioWave, sampleRate, model, start = 0, duration = 3, Q_prime = 3):
+
+    y = encode_audio(audioWave, sampleRate, model, start, duration)
+    full_token_list, _ = prepare_acoustic_tokens(y)
+    
+    return divide_tokens(full_token_list, 8, Q_prime)
+    
+    
     

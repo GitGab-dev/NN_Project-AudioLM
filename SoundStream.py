@@ -272,7 +272,7 @@ class SoundStreamModel(nn.Module):
         x = torch.unsqueeze(input, 1)
         x = self.encoder(x)
         x = torch.transpose(x, -1, -2)
-        print(x.shape)
+        # print(x.shape)
         _, codes, _ = self.quantizer(x)
         return codes
 
@@ -336,7 +336,10 @@ def divide_tokens(full_token_list, Q = 8, Q_prime = 3):
 
 def audio_to_tokens(audio_wave, sample_rate, model, start = 0, duration = 3, Q_prime = 3):
 
-    y = encode_audio(audio_wave, sample_rate, model, start, duration)
+    #y = encode_audio(audio_wave, sample_rate, model, start, duration)
+    with torch.no_grad():
+        y = model.encode(audio_wave)
+    
     full_token_list, _ = prepare_acoustic_tokens(y)
     
     return divide_tokens(full_token_list, 8, Q_prime)
@@ -349,7 +352,7 @@ def tokens_to_audio(coarse_tokens, fine_tokens, model, removeOffsets = True, Q =
     if removeOffsets:
         size = coarse_tokens.shape[0] + fine_tokens.shape[0]
         offsets = torch.tensor([(i % Q) * N for i in range(size)]).reshape((-1,Q))
-        print(embedding.shape, offsets.shape)
+        # print(embedding.shape, offsets.shape)
         embedding = (embedding - offsets).reshape((1,-1,Q))
     
     return decode_audio(embedding, model)

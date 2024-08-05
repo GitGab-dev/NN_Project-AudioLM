@@ -272,7 +272,6 @@ class SoundStreamModel(nn.Module):
         x = torch.unsqueeze(input, 1)
         x = self.encoder(x)
         x = torch.transpose(x, -1, -2)
-        # print(x.shape)
         _, codes, _ = self.quantizer(x)
         return codes
 

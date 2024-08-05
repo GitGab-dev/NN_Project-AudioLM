@@ -9,7 +9,7 @@ import csv
 from tqdm import tqdm
 
 from SoundStream import audio_to_tokens
-
+import re
 
 class LibriDataset(Dataset):
 
@@ -40,34 +40,72 @@ class LibriDataset(Dataset):
 
 class TokensDataset(Dataset):
 
-    def __init__(self, rootTokenDir, sampleRate, requiredDuration, includeSemanticTokens = True, includeCoarseTokens = True, includeFineTokens = True):
+    def __init__(self, rootTokenDir, tokenFile, requiredDuration, sampleRate = 16000, includeFileName = False, includeSemanticTokens = False, includeCoarseTokens = False, includeFineTokens = False):
 
-        self.tokenTypeFlags = (includeSemanticTokens, includeCoarseTokens, includeFineTokens)
+        self.validateParameters(rootTokenDir, tokenFile, requiredDuration, sampleRate)
+        self.tokenTypeFlags = (includeFileName, includeSemanticTokens, includeCoarseTokens, includeFineTokens)
         self.rootTokenDir = rootTokenDir
+        self.tokenFile = tokenFile
         self.requiredDuration = requiredDuration
         self.sampleRate = sampleRate
-        self.tokenList = createTokenList()
+        self.tokenList = self.createTokenList()
 
+    def validateParameters(self, rootTokenDir, tokenFile, requiredDuration, sampleRate):
+
+        if not os.path.exists(os.path.join(rootTokenDir, tokenFile)):
+            raise ValueError("Invalid rootTokenDir. It should be a valid directory path.")
+        
+        if not tokenFile.endswith('.csv'):
+            raise ValueError("Invalid tokenFile. It should be a valid CSV file name.")
+        
+        if not isinstance(requiredDuration, (int, float)) or requiredDuration <= 0:
+            raise ValueError("Invalid requiredDuration. It should be a positive number.")
+        
+        if not isinstance(sampleRate, int) or sampleRate <= 0:
+            raise ValueError("Invalid sampleRate. It should be a positive integer.")
+        
     def createTokenList(self):
+        
+        with open(os.path.join(self.rootTokenDir, self.tokenFile), mode='r', newline = '') as tokenFile:
 
-        ## TO-DO: Use stored tokens to create lists required by flags
+            skipSep = False
+            sep = tokenFile.readline().strip()
+            match = re.match(r'sep=(.)', sep)
+            if match:
+                delimiter = match.group(1)
+            else:
+                skipSep = True
+                delimiter = ";" #I assume this is the default
 
-        return []
+            reader = csv.reader(tokenFile, delimiter=delimiter)
+
+            if not skipSep:
+                sep = next(reader, None)
+
+            header = next(reader, None)
+
+            indices = [i for i, flags in enumerate(self.tokenTypeFlags) if flags] #I take the indices of only the columns I want using the flags
+
+            data = []
+            for row in reader:
+                data.append([row[i] for i in indices])
+
+        return data
 
     def __len__(self):
-        
         return len(self.tokenList)
 
     def __getitem__(self, idx):
-        
-        return tokenList[idx]
+        if idx >= len(self.tokenList):
+            raise IndexError("Index out of range")
+        return self.tokenList[idx]
 
 
-def storeTokens(audioDir, outDir, w2vBERT, soundStream, fileCountCheckpoint = 5):
+def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5):
 
     Path(outDir).mkdir(parents=True, exist_ok=True)
 
-    isNewFile = not os.path.exists(os.path.join(outDir, "out.csv"))
+    isNewFile = not os.path.exists(os.path.join(outDir, outFile))
 
     ## Check for eventual checkpoints
     fileChecked = 0
@@ -107,7 +145,7 @@ def storeTokens(audioDir, outDir, w2vBERT, soundStream, fileCountCheckpoint = 5)
                     fileCount += 1
     
                 if fileCount % fileCountCheckpoint == 0 and reachedCheckpoint and file != lastFile:
-                    with open(os.path.join(outDir, "out.csv"), mode='a', newline='') as outFile, open(os.path.join(outDir, "checkpoint.txt"), mode='w', newline='') as checkpointFile:
+                    with open(os.path.join(outDir, outFile), mode='a', newline='') as outFile, open(os.path.join(outDir, "checkpoint.txt"), mode='w', newline='') as checkpointFile:
                         writer = csv.writer(outFile, delimiter = ";")
     
                         ## Add header in case of newFile
@@ -120,7 +158,7 @@ def storeTokens(audioDir, outDir, w2vBERT, soundStream, fileCountCheckpoint = 5)
     
                         checkpointFile.write(f"{fileCount + fileChecked} {file}")
                         
-                    print(f"SAVED {fileCount} AUDIO ON OUTPUT {os.path.join(outDir, 'out.csv')}. Total of {fileCount + fileChecked} records saved.") 
+                    print(f"SAVED {fileCount} AUDIO ON OUTPUT {os.path.join(outDir, outFile)}. Total of {fileCount + fileChecked} records saved.") 
                     tokenData = []
                     
                 pbar.update(1) 

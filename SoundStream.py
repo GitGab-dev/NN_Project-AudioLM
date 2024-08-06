@@ -333,7 +333,7 @@ def divide_tokens(full_token_list, Q = 8, Q_prime = 3):
     fine_token_list = fine_token_matrix.reshape(-1)
     return coarse_token_list, fine_token_list
 
-def audio_to_tokens(audio_wave, sample_rate, model, start = 0, duration = 3, Q_prime = 3):
+def audio_to_tokens(audio_wave, model, Q = 8, Q_prime = 3):
 
     #y = encode_audio(audio_wave, sample_rate, model, start, duration)
     with torch.no_grad():
@@ -341,7 +341,7 @@ def audio_to_tokens(audio_wave, sample_rate, model, start = 0, duration = 3, Q_p
     
     full_token_list, _ = prepare_acoustic_tokens(y)
     
-    return divide_tokens(full_token_list, 8, Q_prime)
+    return divide_tokens(full_token_list, Q, Q_prime)
 
 def tokens_to_audio(coarse_tokens, fine_tokens, model, removeOffsets = True, Q = 8, Q_prime = 3, N = 1024):
     

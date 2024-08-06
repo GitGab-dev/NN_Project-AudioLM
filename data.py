@@ -7,7 +7,8 @@ from torchaudio.transforms import Resample
 from pathlib import Path
 import csv
 from tqdm import tqdm
-
+import ast
+import random
 from SoundStream import audio_to_tokens
 import re
 
@@ -40,14 +41,28 @@ class LibriDataset(Dataset):
 
 class TokensDataset(Dataset):
 
-    def __init__(self, rootTokenDir, tokenFile, requiredDuration, sampleRate = 16000, includeFileName = False, includeSemanticTokens = False, includeCoarseTokens = False, includeFineTokens = False):
+    def __init__(self, rootTokenDir, tokenFile, requiredDuration, label_fraction = 0.05, Q = 8, Q_prime = 3, sampleRate = 16000, includeFileName = False, includeSemanticTokens = False, includeCoarseTokens = False, includeFineTokens = False):
 
         self.validateParameters(rootTokenDir, tokenFile, requiredDuration, sampleRate)
         self.tokenTypeFlags = (includeFileName, includeSemanticTokens, includeCoarseTokens, includeFineTokens)
         self.rootTokenDir = rootTokenDir
         self.tokenFile = tokenFile
-        self.requiredDuration = requiredDuration
+        match requiredDuration:
+            case 3:
+                self.semanticLenght = 150
+                self.coarseLenght = int( 1208 * Q_prime / Q) 
+                self.fineLenght = int( 1208 * (Q - Q_prime) / Q) 
+            case 10:
+                self.semanticLenght = 500
+                self.coarseLenght = int( 4008 * Q_prime / Q) 
+                self.fineLenght = int( 4008 * (Q - Q_prime) / Q) 
+            case 30:
+                self.semanticLenght = 1500
+                self.coarseLenght = int( 12008 * Q_prime / Q) 
+                self.fineLenght = int( 12008 * (Q - Q_prime) / Q) 
+                
         self.sampleRate = sampleRate
+        self.label_fraction = label_fraction
         self.tokenList = self.createTokenList()
 
     def validateParameters(self, rootTokenDir, tokenFile, requiredDuration, sampleRate):
@@ -84,11 +99,33 @@ class TokensDataset(Dataset):
 
             header = next(reader, None)
 
-            indices = [i for i, flags in enumerate(self.tokenTypeFlags) if flags] #I take the indices of only the columns I want using the flags
-
             data = []
             for row in reader:
-                data.append([row[i] for i in indices])
+                invalid_row = False
+                formatted_row = [ast.literal_eval(cell) if isinstance(cell, str) and cell.startswith('[') and cell.endswith(']') else cell for cell in row]
+                sampled_row = []
+                for i, cell in enumerate(formatted_row):
+                    if isinstance(cell, list):
+                        match i:
+                            case 1:
+                                N = self.semanticLenght
+                            case 2:
+                                N = self.coarseLenght
+                            case 3:
+                                N = self.fineLenght
+                            
+                        if self.tokenTypeFlags[i]:
+                                end_idx = len(cell) - N
+                                if end_idx < 0:
+                                    invalid_row = True
+                                    break
+                                start_idx = random.randint(0, end_idx)
+                                sampled_row.append(cell[start_idx:start_idx + N])
+
+                    elif self.tokenTypeFlags[i]:
+                        sampled_row.append(cell)
+                if not invalid_row:
+                    data.append(sampled_row)
 
         return data
 
@@ -98,7 +135,9 @@ class TokensDataset(Dataset):
     def __getitem__(self, idx):
         if idx >= len(self.tokenList):
             raise IndexError("Index out of range")
-        return self.tokenList[idx]
+
+        input_tokens = torch.tensor(self.tokenList[0][0]).squeeze(0)
+        return input_tokens, input_tokens
 
 
 def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5):
@@ -138,7 +177,7 @@ def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckp
                     waveform, sr = torchaudio.load(file_path)
                     with torch.no_grad():
                         semanticTokens, _ = w2vBERT(waveform)
-                        coarseTokens, fineTokens = audio_to_tokens(waveform, sr, soundStream)
+                        coarseTokens, fineTokens = audio_to_tokens(waveform, soundStream)
                         
                     tokenData.append([file, semanticTokens.tolist(), coarseTokens.tolist(), fineTokens.tolist()])
     

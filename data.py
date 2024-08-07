@@ -115,12 +115,12 @@ class TokensDataset(Dataset):
                                 N = self.fineLenght
                             
                         if self.tokenTypeFlags[i]:
-                                end_idx = len(cell) - N
-                                if end_idx < 0:
-                                    invalid_row = True
-                                    break
-                                start_idx = random.randint(0, end_idx)
-                                sampled_row.append(cell[start_idx:start_idx + N])
+                            end_idx = len(cell) - N
+                            if end_idx < 0:
+                                invalid_row = True
+                                break
+                            start_idx = random.randint(0, end_idx)
+                            sampled_row.append(cell[start_idx:start_idx + N])
 
                     elif self.tokenTypeFlags[i]:
                         sampled_row.append(cell)
@@ -136,7 +136,7 @@ class TokensDataset(Dataset):
         if idx >= len(self.tokenList):
             raise IndexError("Index out of range")
 
-        input_tokens = torch.tensor(self.tokenList[0][0]).squeeze(0)
+        input_tokens = torch.tensor(self.tokenList[idx][0]).squeeze(0)
         return input_tokens, input_tokens
 
 
@@ -184,12 +184,12 @@ def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckp
                     fileCount += 1
     
                 if fileCount % fileCountCheckpoint == 0 and reachedCheckpoint and file != lastFile:
-                    with open(os.path.join(outDir, outFile), mode='a', newline='') as outFile, open(os.path.join(outDir, "checkpoint.txt"), mode='w', newline='') as checkpointFile:
-                        writer = csv.writer(outFile, delimiter = ";")
+                    with open(os.path.join(outDir, outFile), mode='a', newline='') as outFD, open(os.path.join(outDir, "checkpoint.txt"), mode='w', newline='') as checkpointFile:
+                        writer = csv.writer(outFD, delimiter = ";")
     
                         ## Add header in case of newFile
                         if isNewFile:
-                            outFile.write("sep=;\n")
+                            outFD.write("sep=;\n")
                             writer.writerow(["fileName", "semanticTokens", "coarseTokens", "fineTokens"])
                             isNewFile = not isNewFile
                             

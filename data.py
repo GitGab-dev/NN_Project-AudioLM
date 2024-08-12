@@ -41,8 +41,8 @@ class LibriDataset(Dataset):
 
 class TokensDataset(Dataset):
 
-    def __init__(self, rootTokenDir, tokenFile, requiredDuration, label_fraction = 0.05, Q = 8, Q_prime = 3, sampleRate = 16000, includeFileName = False, includeSemanticTokens = False, includeCoarseTokens = False, includeFineTokens = False):
-
+    def __init__(self, rootTokenDir, tokenFile, requiredDuration, Q = 8, Q_prime = 3, sampleRate = 16000, includeFileName = False, includeSemanticTokens = False, includeCoarseTokens = False, includeFineTokens = False):
+        self.eosToken = -100
         self.validateParameters(rootTokenDir, tokenFile, requiredDuration, sampleRate)
         self.tokenTypeFlags = (includeFileName, includeSemanticTokens, includeCoarseTokens, includeFineTokens)
         self.rootTokenDir = rootTokenDir
@@ -62,7 +62,6 @@ class TokensDataset(Dataset):
                 self.fineLenght = int( 12008 * (Q - Q_prime) / Q) 
                 
         self.sampleRate = sampleRate
-        self.label_fraction = label_fraction
         self.tokenList = self.createTokenList()
 
     def validateParameters(self, rootTokenDir, tokenFile, requiredDuration, sampleRate):
@@ -136,8 +135,9 @@ class TokensDataset(Dataset):
         if idx >= len(self.tokenList):
             raise IndexError("Index out of range")
 
-        input_tokens = torch.tensor(self.tokenList[idx][0]).squeeze(0)
-        return input_tokens, input_tokens
+        input_tokens = torch.tensor(self.tokenList[idx][0]).unsqueeze(0)
+        labels = torch.tensor(self.tokenList[idx][0][1:] + [self.eosToken]).unsqueeze(0)
+        return input_tokens, labels
 
 
 def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5):

@@ -11,6 +11,7 @@ import ast
 import random
 from SoundStream import audio_to_tokens
 import re
+from torchaudio.datasets import LibriLightLimited
 
 class LibriDataset(Dataset):
 
@@ -118,8 +119,8 @@ class TokensDataset(Dataset):
                             if end_idx < 0:
                                 invalid_row = True
                                 break
-                            start_idx = random.randint(0, end_idx)
-                            sampled_row.append(cell[start_idx:start_idx + N])
+                            #start_idx = random.randint(0, end_idx)
+                            sampled_row.append(cell[0:N])
 
                     elif self.tokenTypeFlags[i]:
                         sampled_row.append(cell)
@@ -205,3 +206,57 @@ def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckp
     return fileCount
 
 
+def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5, subset = "10h"):
+    Path(outDir).mkdir(parents=True, exist_ok=True)
+
+    isNewFile = not os.path.exists(os.path.join(outDir, outFile))
+
+    ## Check for eventual checkpoints
+    fileChecked = 0
+    reachedCheckpoint = False
+    lastFile = None
+    
+    if os.path.exists(os.path.join(outDir, "checkpoint.txt")):
+        with open(os.path.join(outDir, "checkpoint.txt"), mode='r', newline='') as checkpointFile:
+            
+            fileChecked, lastFile = checkpointFile.readline().strip().split(" ")
+            fileChecked = int(fileChecked)
+            print("Found a checkpoint!")
+
+    tokenData = []
+    fileCount = 0
+
+    dataset = LibriLightLimited("./librilight", download=True, subset= subset)
+
+    for i, (waveform, sr, transcript, spid, chid, utid) in enumerate(dataset):
+        file = f"{spid} {chid} {utid}"
+        reachedCheckpoint = (fileChecked == 0 or file == lastFile or reachedCheckpoint)
+        
+        if reachedCheckpoint and file != lastFile:
+            waveform, sr = torchaudio.functional.resample(waveform, sr, 16000), 16000
+            with torch.no_grad():
+                semanticTokens, _ = w2vBERT(waveform)
+                coarseTokens, fineTokens = audio_to_tokens(waveform, soundStream)
+                
+            tokenData.append([file, semanticTokens.tolist(), coarseTokens.tolist(), fineTokens.tolist()])
+
+            fileCount += 1
+
+        if fileCount % fileCountCheckpoint == 0 and reachedCheckpoint and file != lastFile:
+            with open(os.path.join(outDir, outFile), mode='a', newline='') as outFD, open(os.path.join(outDir, "checkpoint.txt"), mode='w', newline='') as checkpointFile:
+                writer = csv.writer(outFD, delimiter = ";")
+
+                ## Add header in case of newFile
+                if isNewFile:
+                    outFD.write("sep=;\n")
+                    writer.writerow(["fileName", "semanticTokens", "coarseTokens", "fineTokens"])
+                    isNewFile = not isNewFile
+                    
+                writer.writerows(tokenData)
+
+                checkpointFile.write(f"{fileCount + fileChecked} {file}")
+                
+            print(f"SAVED {fileCount} AUDIO ON OUTPUT {os.path.join(outDir, outFile)}. Total of {fileCount + fileChecked} records saved.") 
+            tokenData = []
+                
+    return fileCount

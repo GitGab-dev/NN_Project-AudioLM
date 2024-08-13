@@ -137,7 +137,7 @@ class Decoder(pl.LightningModule):
         optimizer = Adam(self.parameters(), lr=1e-4)  # Replace with your preferred optimizer
         return optimizer
     
-    def train(self, train_dataset, first_training = True, num_epochs = 10, checkpoint_dir = "./checkpoints", checkpoints_interval = 1, loss_file = "losses.csv"):
+    def train(self, train_dataset, first_training = True, num_epochs = 10, checkpoint_dir = "./checkpoints", checkpoints_interval = 1, loss_file = "losses.csv", steps_per_checkpoint = 50):
         os.makedirs(checkpoint_dir, exist_ok=True) 
         loss_values = []
 
@@ -172,6 +172,17 @@ class Decoder(pl.LightningModule):
                 # Backward pass
                 loss.backward(retain_graph = True)
                 self.optimizer.step()
+
+                if step_counter % steps_per_checkpoint == 0:
+                    checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_step_{epoch+1}_{step_counter}.pt')
+                    torch.save({
+                        'epoch': epoch + 1,
+                        'step': step_counter,
+                        'model_state_dict': self.state_dict(),
+                        'optimizer_state_dict': self.optimizer.state_dict(),
+                        'loss': epoch_loss / len(train_dataset),
+                    }, checkpoint_path)
+                    print(f"Checkpoint saved at {checkpoint_path}")
 
             # Print or log epoch loss
             print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss / len(train_dataset)}")

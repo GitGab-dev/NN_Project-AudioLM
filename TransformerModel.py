@@ -116,6 +116,7 @@ class Decoder(pl.LightningModule):
         self.linear = nn.Linear(d_model, vocab_size)
         self.loss_fn = nn.CrossEntropyLoss()
         self.optimizer = self.configure_optimizers()
+        self.automatic_optimization = False
 
     def forward(self, x):
         x = self.embedding(x)
@@ -131,13 +132,58 @@ class Decoder(pl.LightningModule):
         target_ids = target_ids.view(-1)  # (batch_size * seq_len)
         loss = self.loss_fn(output, target_ids)
         self.log('train_loss', loss)
-        return loss
 
+        self.manual_backward(loss, retain_graph=True)
+
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+        return loss
+        
+    def validation_step(self, batch, batch_idx):
+        input_ids, target_ids = batch
+        output = self(input_ids)
+        output = output.view(-1, output.size(-1))
+        target_ids = target_ids.view(-1)
+        
+        # Compute loss
+        loss = self.loss_fn(output, target_ids)
+        self.log("val_loss", loss)
+
+
+        # calculate acc
+        labels_hat = torch.argmax(output, dim=1)
+        val_acc = torch.sum(target_ids == labels_hat).item() / (len(target_ids) * 1.0)
+
+        # log the outputs!
+        self.log_dict({'val_loss': loss, 'val_acc': val_acc})
+        return {'val_loss': loss, 'val_acc': val_acc}
+
+    
     def configure_optimizers(self):
         optimizer = Adam(self.parameters(), lr=1e-4)  # Replace with your preferred optimizer
         return optimizer
+
+    def generate_tokens(self, input_ids, num_tokens=10):
+        generated_sequence = input_ids
+
+        for _ in range(num_tokens):
+            with torch.no_grad():
+                output = self(generated_sequence)  # output shape: [1, seq_len, vocab_size]
+                next_token_logits = output[:, -1, :]  # logits for the last token
+                probs = F.softmax(next_token_logits, dim=-1)  # convert to probabilities
+                next_token = torch.argmax(probs, dim=-1)  # get the most probable token
+                generated_sequence = torch.cat((generated_sequence, next_token.unsqueeze(0)), dim=1)
+
+        return generated_sequence
+
+    def return_optimizer(self):
+        return self.optimizer
     
-    def train(self, train_dataset, first_training = True, num_epochs = 10, checkpoint_dir = "./checkpoints", checkpoints_interval = 1, loss_file = "losses.csv", steps_per_checkpoint = 50):
+    def return_loss(self):
+        return self.loss_fn
+    
+    """def train(self, train_dataset, first_training = True, num_epochs = 10, checkpoint_dir = "./checkpoints", checkpoints_interval = 1, loss_file = "losses.csv", steps_per_checkpoint = 50):
         os.makedirs(checkpoint_dir, exist_ok=True) 
         loss_values = []
 
@@ -196,9 +242,9 @@ class Decoder(pl.LightningModule):
                     'optimizer_state_dict': self.optimizer.state_dict(),
                     'loss': epoch_loss / len(train_dataset),
                 }, checkpoint_path)
-                print(f"Checkpoint saved at {checkpoint_path}")
+                print(f"Checkpoint saved at {checkpoint_path}")"""
 
-
+#def train(model, train_dataset, first_training = True, num_epochs = 10, checkpoint_dir = "./checkpoints", checkpoints_interval = 1, loss_file = "losses.csv", steps_per_checkpoint = 50):
     
 '''
 class PositionEncoding(nn.Module):

@@ -136,8 +136,8 @@ class TokensDataset(Dataset):
         if idx >= len(self.tokenList):
             raise IndexError("Index out of range")
 
-        input_tokens = torch.tensor(self.tokenList[idx][0]).unsqueeze(0)
-        labels = torch.tensor(self.tokenList[idx][0][1:] + [self.eosToken]).unsqueeze(0)
+        input_tokens = torch.tensor(self.tokenList[idx][0])
+        labels = torch.tensor(self.tokenList[idx][0][1:] + [self.eosToken])
         return input_tokens, labels
 
 

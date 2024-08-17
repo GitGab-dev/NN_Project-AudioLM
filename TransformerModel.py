@@ -148,8 +148,6 @@ class Decoder(pl.LightningModule):
         
         # Compute loss
         loss = self.loss_fn(output, target_ids)
-        self.log("val_loss", loss)
-
 
         # calculate acc
         labels_hat = torch.argmax(output, dim=1)
@@ -159,6 +157,8 @@ class Decoder(pl.LightningModule):
         self.log_dict({'val_loss': loss, 'val_acc': val_acc})
         return {'val_loss': loss, 'val_acc': val_acc}
 
+    def on_train_epoch_end(self):
+        torch.save(self.state_dict(), f"checkpoints/epoch={self.current_epoch:02d}.ckpt")
     
     def configure_optimizers(self):
         optimizer = Adam(self.parameters(), lr=1e-4)  # Replace with your preferred optimizer

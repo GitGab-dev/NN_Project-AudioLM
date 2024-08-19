@@ -166,86 +166,26 @@ class Decoder(pl.LightningModule):
 
     def generate_tokens(self, input_ids, num_tokens=10):
         generated_sequence = input_ids
+        total_sequence = generated_sequence
 
-        for _ in range(num_tokens):
+        for _ in tqdm.tqdm(range(num_tokens)):
             with torch.no_grad():
                 output = self(generated_sequence)  # output shape: [1, seq_len, vocab_size]
                 next_token_logits = output[:, -1, :]  # logits for the last token
                 probs = F.softmax(next_token_logits, dim=-1)  # convert to probabilities
                 next_token = torch.argmax(probs, dim=-1)  # get the most probable token
-                generated_sequence = torch.cat((generated_sequence, next_token.unsqueeze(0)), dim=1)
 
-        return generated_sequence
+                total_sequence = torch.cat((total_sequence, next_token.unsqueeze(0)), dim=1)
+                generated_sequence = torch.cat((generated_sequence[:, 1:], next_token.unsqueeze(0)), dim=1)
+
+        return total_sequence
 
     def return_optimizer(self):
         return self.optimizer
     
     def return_loss(self):
         return self.loss_fn
-    
-    """def train(self, train_dataset, first_training = True, num_epochs = 10, checkpoint_dir = "./checkpoints", checkpoints_interval = 1, loss_file = "losses.csv", steps_per_checkpoint = 50):
-        os.makedirs(checkpoint_dir, exist_ok=True) 
-        loss_values = []
 
-        # Initialize loss file
-        with open(loss_file, 'w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(['Step', 'Loss'])
-
-        step_counter = 0  # To keep track of steps for loss file
-
-        for epoch in range(num_epochs):
-            epoch_loss = 0
-            
-            for input_ids, target_ids in tqdm.tqdm(train_dataset):
-                self.optimizer.zero_grad()
-
-                # Forward pass
-                output = self(input_ids)
-                output = output.view(-1, output.size(-1))
-                target_ids = target_ids.view(-1)
-                
-                # Compute loss
-                loss = self.loss_fn(output, target_ids)
-                epoch_loss += loss.item()
-                
-                # Save loss value to file
-                with open(loss_file, 'a', newline='') as file:
-                    writer = csv.writer(file)
-                    writer.writerow([step_counter + 1, loss.item()])
-                step_counter += 1
-                
-                # Backward pass
-                loss.backward(retain_graph = True)
-                self.optimizer.step()
-
-                if step_counter % steps_per_checkpoint == 0:
-                    checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_step_{epoch+1}_{step_counter}.pt')
-                    torch.save({
-                        'epoch': epoch + 1,
-                        'step': step_counter,
-                        'model_state_dict': self.state_dict(),
-                        'optimizer_state_dict': self.optimizer.state_dict(),
-                        'loss': epoch_loss / len(train_dataset),
-                    }, checkpoint_path)
-                    print(f"Checkpoint saved at {checkpoint_path}")
-
-            # Print or log epoch loss
-            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss / len(train_dataset)}")
-            
-            # Save checkpoint
-            if (epoch + 1) % checkpoints_interval == 0:
-                checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch + 1}.pt')
-                torch.save({
-                    'epoch': epoch + 1,
-                    'model_state_dict': self.state_dict(),
-                    'optimizer_state_dict': self.optimizer.state_dict(),
-                    'loss': epoch_loss / len(train_dataset),
-                }, checkpoint_path)
-                print(f"Checkpoint saved at {checkpoint_path}")"""
-
-#def train(model, train_dataset, first_training = True, num_epochs = 10, checkpoint_dir = "./checkpoints", checkpoints_interval = 1, loss_file = "losses.csv", steps_per_checkpoint = 50):
-    
 '''
 class PositionEncoding(nn.Module):
     

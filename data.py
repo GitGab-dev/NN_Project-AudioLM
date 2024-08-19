@@ -50,15 +50,15 @@ class TokensDataset(Dataset):
         self.tokenFile = tokenFile
         match requiredDuration:
             case 3:
-                self.semanticLenght = 150
+                self.semanticLenght = 149
                 self.coarseLenght = int( 1208 * Q_prime / Q) 
                 self.fineLenght = int( 1208 * (Q - Q_prime) / Q) 
             case 10:
-                self.semanticLenght = 500
+                self.semanticLenght = 499
                 self.coarseLenght = int( 4008 * Q_prime / Q) 
                 self.fineLenght = int( 4008 * (Q - Q_prime) / Q) 
             case 30:
-                self.semanticLenght = 1500
+                self.semanticLenght = 1499
                 self.coarseLenght = int( 12008 * Q_prime / Q) 
                 self.fineLenght = int( 12008 * (Q - Q_prime) / Q) 
                 
@@ -120,7 +120,7 @@ class TokensDataset(Dataset):
                                 invalid_row = True
                                 break
                             #start_idx = random.randint(0, end_idx)
-                            sampled_row.append(cell[0:N])
+                            sampled_row.append(cell[0:N+1])
 
                     elif self.tokenTypeFlags[i]:
                         sampled_row.append(cell)
@@ -136,8 +136,8 @@ class TokensDataset(Dataset):
         if idx >= len(self.tokenList):
             raise IndexError("Index out of range")
 
-        input_tokens = torch.tensor(self.tokenList[idx][0])
-        labels = torch.tensor(self.tokenList[idx][0][1:] + [self.eosToken])
+        input_tokens = torch.tensor(self.tokenList[idx][0][:-1])
+        labels = torch.tensor(self.tokenList[idx][0][1:])
         return input_tokens, labels
 
 
@@ -226,6 +226,7 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
     tokenData = []
     fileCount = 0
 
+    Path("./librilight").mkdir(parents=True, exist_ok=True)
     dataset = LibriLightLimited("./librilight", download=True, subset= subset)
 
     for i, (waveform, sr, transcript, spid, chid, utid) in enumerate(dataset):

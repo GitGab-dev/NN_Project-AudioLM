@@ -350,7 +350,7 @@ def tokens_to_audio(coarse_tokens, fine_tokens, model, removeOffsets = True, Q =
 
     if removeOffsets:
         size = coarse_tokens.shape[0]
-        offsets = torch.tensor([(i % Q) * N for i in range(size * 8)]).reshape((-1,Q))
+        offsets = torch.tensor([(i % Q) * N for i in range(size * Q)]).reshape((-1,Q))
         # print(embedding.shape, offsets.shape)
         embedding = (embedding - offsets).reshape((1,-1,Q))
     

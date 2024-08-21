@@ -346,13 +346,16 @@ def audio_to_tokens(audio_wave, model, Q = 8, Q_prime = 3):
 def tokens_to_audio(coarse_tokens, fine_tokens, model, removeOffsets = True, Q = 8, Q_prime = 3, N = 1024):
     
     coarse_shaped, fine_shaped = coarse_tokens.reshape((-1,Q_prime)),fine_tokens.reshape((-1,Q - Q_prime))
-    embedding = torch.hstack((coarse_shaped, fine_shaped))
+    embedding = torch.hstack((coarse_shaped, fine_shaped)).reshape((1,-1,Q))
+
+    
 
     if removeOffsets:
-        size = coarse_tokens.shape[0]
+        size = coarse_shaped.shape[0]
         offsets = torch.tensor([(i % Q) * N for i in range(size * Q)]).reshape((-1,Q))
-        # print(embedding.shape, offsets.shape)
         embedding = (embedding - offsets).reshape((1,-1,Q))
+
+    print(embedding)
     
     return decode_audio(embedding, model)
     

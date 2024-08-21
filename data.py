@@ -219,8 +219,9 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
     if os.path.exists(os.path.join(outDir, "checkpoint.txt")):
         with open(os.path.join(outDir, "checkpoint.txt"), mode='r', newline='') as checkpointFile:
             
-            fileChecked, lastFile = checkpointFile.readline().strip().split(" ")
+            fileChecked, lastFileSP, lastFileCH, lastFileUT = checkpointFile.readline().strip().split(" ")
             fileChecked = int(fileChecked)
+            lastFile = f"{lastFileSP} {lastFileSP} {lastFileUT}"
             print("Found a checkpoint!")
 
     tokenData = []

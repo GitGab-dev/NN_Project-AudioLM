@@ -51,7 +51,7 @@ class AttentionHead(nn.Module):
         att_scores: torch.Tensor = (attn_1 + attn_2)/(self.d_model ** 0.5)
         if mask is not None:
             mask = mask.to(torch.int)
-            att_scores: torch.Tensor = att_scores.masked_fill(mask.unsqueeze(1) == 0, -1e9)
+            att_scores: torch.Tensor = att_scores.masked_fill(mask == 0, -1e9)
         att_weights: torch.Tensor = F.softmax(att_scores, dim=-1)
         # Weighted sum of values
         values_1: torch.Tensor = torch.matmul(att_weights, value) # (b_s, n_t, head_dim)
@@ -95,9 +95,9 @@ class DecoderLayer(nn.Module):
         self.layer_norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x, mask: torch.Tensor = None):
         # Multi-head attention
-        attn_output = self.attention(x, x, x)
+        attn_output = self.attention(x, x, x, mask)
         x = self.layer_norm1(x + self.dropout(attn_output))
         # Feed-forward network
         ff_output = self.feed_forward(x)
@@ -107,6 +107,7 @@ class DecoderLayer(nn.Module):
 class Decoder(pl.LightningModule):
     def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1500, vocab_size = 1500):
         super().__init__()
+        self.seq_len = seq_len
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.layers = nn.ModuleList([
             DecoderLayer(d_model, num_heads, dim_feedforward, dropout, k, seq_len)
@@ -117,20 +118,41 @@ class Decoder(pl.LightningModule):
         self.loss_fn = nn.CrossEntropyLoss()
         self.optimizer = self.configure_optimizers()
         self.automatic_optimization = False
+        self.seq_len = seq_len
+        self.causal_mask = torch.tril(torch.ones((seq_len, seq_len))).unsqueeze(0)
 
-    def forward(self, x):
+    def forward(self, x, mask: torch.Tensor = None):
         x = self.embedding(x)
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x, mask)
         output = self.linear(self.norm(x))    
         return output
     
-    def training_step(self, batch, batch_idx):
-        input_ids, target_ids = batch
-        output = self(input_ids)
-        output = output.view(-1, output.size(-1))  # (batch_size * seq_len, vocab_size)
-        target_ids = target_ids.view(-1)  # (batch_size * seq_len)
-        loss = self.loss_fn(output, target_ids)
+    def training_step(self, batch, batch_idx, pad_token_index = 0):
+        input_ids, target_ids, padding_mask = batch
+
+        if padding_mask is not None:
+            # Combine causal mask and padding mask
+            padding_mask = padding_mask.unsqueeze(1) # Adjust dimensions
+            combined_mask = self.causal_mask * padding_mask
+        else:
+            combined_mask = self.causal_mask
+        # Forward pass
+        output = self(input_ids, combined_mask)  # output shape: (batch_size, seq_len, vocab_size)
+        
+        # Only consider the target sequence part for loss
+        batch_size, input_seq_len = input_ids.shape
+        target_seq_len = target_ids.shape[1]
+        
+        # Get the target portion of the output
+        output_target = output[:, input_seq_len - target_seq_len:, :]  # Last target_seq_len tokens
+        target_ids_shifted = target_ids  # target_ids is already aligned
+        
+        # Reshape for CrossEntropyLoss
+        output_target = output_target.reshape(-1, output_target.size(-1))  # (batch_size * target_seq_len, vocab_size)
+        target_ids_shifted = target_ids_shifted.reshape(-1) 
+        # Compute loss
+        loss = self.loss_fn(output_target, target_ids_shifted)
         self.log('train_loss', loss)
 
         self.manual_backward(loss, retain_graph=True)
@@ -141,17 +163,34 @@ class Decoder(pl.LightningModule):
         return loss
         
     def validation_step(self, batch, batch_idx):
-        input_ids, target_ids = batch
-        output = self(input_ids)
-        output = output.view(-1, output.size(-1))
-        target_ids = target_ids.view(-1)
+        input_ids, target_ids, padding_mask = batch
+
+        if padding_mask is not None:
+            # Combine causal mask and padding mask
+            padding_mask = padding_mask.unsqueeze(1) # Adjust dimensions
+            combined_mask = self.causal_mask * padding_mask
+        else:
+            combined_mask = self.causal_mask
+        # Forward pass
+        output = self(input_ids, combined_mask)  # output shape: (batch_size, seq_len, vocab_size)
         
+        # Only consider the target sequence part for loss
+        batch_size, input_seq_len = input_ids.shape
+        target_seq_len = target_ids.shape[1]
+        
+        # Get the target portion of the output
+        output_target = output[:, input_seq_len - target_seq_len:, :]  # Last target_seq_len tokens
+        target_ids_shifted = target_ids  # target_ids is already aligned
+        
+        # Reshape for CrossEntropyLoss
+        output_target = output_target.reshape(-1, output_target.size(-1))  # (batch_size * target_seq_len, vocab_size)
+        target_ids_shifted = target_ids_shifted.reshape(-1) 
         # Compute loss
-        loss = self.loss_fn(output, target_ids)
+        loss = self.loss_fn(output_target, target_ids_shifted)
 
         # calculate acc
-        labels_hat = torch.argmax(output, dim=1)
-        val_acc = torch.sum(target_ids == labels_hat).item() / (len(target_ids) * 1.0)
+        labels_hat = torch.argmax(output_target, dim=1)
+        val_acc = torch.sum(target_ids_shifted == labels_hat).item() / (len(target_ids_shifted) * 1.0)
 
         # log the outputs!
         self.log_dict({'val_loss': loss, 'val_acc': val_acc})
@@ -187,6 +226,40 @@ class Decoder(pl.LightningModule):
         return self.loss_fn
 
 '''
+
+    def training_step(self, batch, batch_idx):
+        input_ids, target_ids = batch
+        output = self(input_ids)
+        output = output.view(-1, output.size(-1))  # (batch_size * seq_len, vocab_size)
+        target_ids = target_ids.view(-1)  # (batch_size * seq_len)
+        loss = self.loss_fn(output, target_ids)
+        self.log('train_loss', loss)
+
+        self.manual_backward(loss, retain_graph=True)
+
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+        return loss
+        
+    def validation_step(self, batch, batch_idx):
+        input_ids, target_ids = batch
+        output = self(input_ids)
+        output = output.view(-1, output.size(-1))
+        target_ids = target_ids.view(-1)
+        
+        # Compute loss
+        loss = self.loss_fn(output, target_ids)
+
+        # calculate acc
+        labels_hat = torch.argmax(output, dim=1)
+        val_acc = torch.sum(target_ids == labels_hat).item() / (len(target_ids) * 1.0)
+
+        # log the outputs!
+        self.log_dict({'val_loss': loss, 'val_acc': val_acc})
+        return {'val_loss': loss, 'val_acc': val_acc}
+
+
 class PositionEncoding(nn.Module):
     
     def __init__(self, d_model=1500, max_len=1500):

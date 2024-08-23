@@ -6,3 +6,6 @@
 /out
 /librilight
 /lightning_logs
+losses.csv
+/out-10min
+/out-1h

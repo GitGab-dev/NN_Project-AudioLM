@@ -42,12 +42,13 @@ class LibriDataset(Dataset):
 
 class TokensDataset(Dataset):
 
-    def __init__(self, rootTokenDir, tokenFile, requiredDuration, Q = 8, Q_prime = 3, sampleRate = 16000, includeFileName = False, includeSemanticTokens = False, includeCoarseTokens = False, includeFineTokens = False):
-        self.eosToken = -100
+    def __init__(self, rootTokenDir, tokenFile, requiredDuration, Q = 8, Q_prime = 3, sampleRate = 16000, includeFileName = False, includeSemanticTokens = False, includeCoarseTokens = False, includeFineTokens = False, maxDur = 15000):
+        self.padToken = 0
         self.validateParameters(rootTokenDir, tokenFile, requiredDuration, sampleRate)
         self.tokenTypeFlags = (includeFileName, includeSemanticTokens, includeCoarseTokens, includeFineTokens)
         self.rootTokenDir = rootTokenDir
         self.tokenFile = tokenFile
+        self.maxDur = maxDur
         match requiredDuration:
             case 3:
                 self.semanticLenght = 149
@@ -120,10 +121,11 @@ class TokensDataset(Dataset):
                                 invalid_row = True
                                 break
                             #start_idx = random.randint(0, end_idx)
-                            sampled_row.append(cell[0:N+1])
+                            if sampled_row == []:
+                                sampled_row = [cell[0:N]]
+                            else:
+                                sampled_row.append(cell[0:N])
 
-                    elif self.tokenTypeFlags[i]:
-                        sampled_row.append(cell)
                 if not invalid_row:
                     data.append(sampled_row)
 
@@ -135,10 +137,18 @@ class TokensDataset(Dataset):
     def __getitem__(self, idx):
         if idx >= len(self.tokenList):
             raise IndexError("Index out of range")
-
-        input_tokens = torch.tensor(self.tokenList[idx][0][:-1])
-        labels = torch.tensor(self.tokenList[idx][0][1:])
-        return input_tokens, labels
+        #THIS WORKS ONLY ON SEMANTIC + COARSE FOR NOW
+        concat_list = self.tokenList[idx][0] + self.tokenList[idx][1][:-1]
+        toPad = self.maxDur - len(concat_list)
+        padding = [0] * toPad
+        concat_list += padding
+        inputs = torch.tensor(concat_list)
+        labels = torch.tensor(self.tokenList[idx][1][1:])
+        mask = mask = (inputs != self.padToken)
+        return inputs, labels, mask
+    
+    def get_padToken(self):
+        return self.padToken
 
 
 def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5):

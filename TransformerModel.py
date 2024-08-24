@@ -128,31 +128,29 @@ class Decoder(pl.LightningModule):
         output = self.linear(self.norm(x))    
         return output
     
-    def training_step(self, batch, batch_idx, pad_token_index = 0):
-        input_ids, target_ids, padding_mask = batch
 
-        if padding_mask is not None:
-            # Combine causal mask and padding mask
-            padding_mask = padding_mask.unsqueeze(1) # Adjust dimensions
-            combined_mask = self.causal_mask * padding_mask
-        else:
-            combined_mask = self.causal_mask
-        # Forward pass
-        output = self(input_ids, combined_mask)  # output shape: (batch_size, seq_len, vocab_size)
+    def common_step(self, batch):
+        input_ids, target_ids = batch
+
+        output = self(input_ids, self.causal_mask)  # output shape: (batch_size, seq_len, vocab_size)
         
-        # Only consider the target sequence part for loss
         batch_size, input_seq_len = input_ids.shape
         target_seq_len = target_ids.shape[1]
         
-        # Get the target portion of the output
-        output_target = output[:, input_seq_len - target_seq_len:, :]  # Last target_seq_len tokens
-        target_ids_shifted = target_ids  # target_ids is already aligned
+        output_target = output[:, input_seq_len - target_seq_len:, :]  # I take only the tokens I need to check (for the coarse generation I take only the coarse generated)
         
         # Reshape for CrossEntropyLoss
         output_target = output_target.reshape(-1, output_target.size(-1))  # (batch_size * target_seq_len, vocab_size)
-        target_ids_shifted = target_ids_shifted.reshape(-1) 
+        target_ids= target_ids.reshape(-1) 
+
         # Compute loss
-        loss = self.loss_fn(output_target, target_ids_shifted)
+        loss = self.loss_fn(output_target, target_ids)
+        return loss, output_target, target_ids
+        
+    def training_step(self, batch, batch_idx):
+        
+        loss, _, _ = self.common_step(batch)
+
         self.log('train_loss', loss)
 
         self.manual_backward(loss, retain_graph=True)
@@ -163,53 +161,39 @@ class Decoder(pl.LightningModule):
         return loss
         
     def validation_step(self, batch, batch_idx):
-        input_ids, target_ids, padding_mask = batch
+        
+        loss, output_target, target_ids = self.common_step(batch)
 
-        if padding_mask is not None:
-            # Combine causal mask and padding mask
-            padding_mask = padding_mask.unsqueeze(1) # Adjust dimensions
-            combined_mask = self.causal_mask * padding_mask
-        else:
-            combined_mask = self.causal_mask
-        # Forward pass
-        output = self(input_ids, combined_mask)  # output shape: (batch_size, seq_len, vocab_size)
-        
-        # Only consider the target sequence part for loss
-        batch_size, input_seq_len = input_ids.shape
-        target_seq_len = target_ids.shape[1]
-        
-        # Get the target portion of the output
-        output_target = output[:, input_seq_len - target_seq_len:, :]  # Last target_seq_len tokens
-        target_ids_shifted = target_ids  # target_ids is already aligned
-        
-        # Reshape for CrossEntropyLoss
-        output_target = output_target.reshape(-1, output_target.size(-1))  # (batch_size * target_seq_len, vocab_size)
-        target_ids_shifted = target_ids_shifted.reshape(-1) 
-        # Compute loss
-        loss = self.loss_fn(output_target, target_ids_shifted)
-
-        # calculate acc
         labels_hat = torch.argmax(output_target, dim=1)
-        val_acc = torch.sum(target_ids_shifted == labels_hat).item() / (len(target_ids_shifted) * 1.0)
+        val_acc = torch.sum(target_ids == labels_hat).item() / (len(target_ids) * 1.0)
 
-        # log the outputs!
         self.log_dict({'val_loss': loss, 'val_acc': val_acc})
         return {'val_loss': loss, 'val_acc': val_acc}
 
     def on_train_epoch_end(self):
-        torch.save(self.state_dict(), f"checkpoints/epoch={self.current_epoch:02d}.ckpt")
+        torch.save(self.state_dict(), f"checkpoints/{self.__class__.__name__}_epoch={self.current_epoch:02d}.ckpt")
     
     def configure_optimizers(self):
         optimizer = Adam(self.parameters(), lr=1e-4)  # Replace with your preferred optimizer
         return optimizer
 
-    def generate_tokens(self, input_ids, num_tokens=10):
-        generated_sequence = input_ids
-        total_sequence = generated_sequence
+    def generate_tokens(self, input_ids, padding_mask = None, num_tokens=10):
 
+        generated_sequence = input_ids.unsqueeze(0)
+        total_sequence = generated_sequence
+        padding_mask = padding_mask.unsqueeze(1)
         for _ in tqdm.tqdm(range(num_tokens)):
             with torch.no_grad():
-                output = self(generated_sequence)  # output shape: [1, seq_len, vocab_size]
+
+                if padding_mask is not None:
+                    # Combine causal mask and padding mask
+                    combined_mask = self.causal_mask * padding_mask
+                    padding_mask = torch.cat([padding_mask[:, :, 1:], torch.tensor([[[1]]])], dim = 2)
+                    
+                else:
+                    combined_mask = self.causal_mask
+
+                output = self(generated_sequence, combined_mask)  # output shape: [1, seq_len, vocab_size]
                 next_token_logits = output[:, -1, :]  # logits for the last token
                 probs = F.softmax(next_token_logits, dim=-1)  # convert to probabilities
                 next_token = torch.argmax(probs, dim=-1)  # get the most probable token
@@ -218,158 +202,73 @@ class Decoder(pl.LightningModule):
                 generated_sequence = torch.cat((generated_sequence[:, 1:], next_token.unsqueeze(0)), dim=1)
 
         return total_sequence
-
-    def return_optimizer(self):
-        return self.optimizer
     
-    def return_loss(self):
-        return self.loss_fn
+    def pad_sequence(self, sequence, lenght):
+        to_pad = lenght - sequence.shape[0]
+        if to_pad > 0:
+            padded_sequence = F.pad(sequence, (0, to_pad))
+            padding_mask = torch.ones(1, lenght)
+            padding_mask[0, sequence.shape[0]:] = 0
+            return padded_sequence, padding_mask
+        elif to_pad == 0:
+            return sequence, None
+        else:
+            raise ValueError(f"Invalid token lenght, shorten the input to match this size {lenght}")
 
-'''
+class SemanticTransformer(Decoder):
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1498, vocab_size = 1024):
+        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size)
 
-    def training_step(self, batch, batch_idx):
-        input_ids, target_ids = batch
-        output = self(input_ids)
-        output = output.view(-1, output.size(-1))  # (batch_size * seq_len, vocab_size)
-        target_ids = target_ids.view(-1)  # (batch_size * seq_len)
-        loss = self.loss_fn(output, target_ids)
-        self.log('train_loss', loss)
-
-        self.manual_backward(loss, retain_graph=True)
-
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-
-        return loss
-        
-    def validation_step(self, batch, batch_idx):
-        input_ids, target_ids = batch
-        output = self(input_ids)
-        output = output.view(-1, output.size(-1))
-        target_ids = target_ids.view(-1)
-        
-        # Compute loss
-        loss = self.loss_fn(output, target_ids)
-
-        # calculate acc
-        labels_hat = torch.argmax(output, dim=1)
-        val_acc = torch.sum(target_ids == labels_hat).item() / (len(target_ids) * 1.0)
-
-        # log the outputs!
-        self.log_dict({'val_loss': loss, 'val_acc': val_acc})
-        return {'val_loss': loss, 'val_acc': val_acc}
-
-
-class PositionEncoding(nn.Module):
-    
-    def __init__(self, d_model=1500, max_len=1500):
-
-        super().__init__()
-
-        pe = torch.zeros(max_len, d_model)
-    
-        position = torch.arange(start=0, end=max_len, step=1).float().unsqueeze(1)
-
-        embedding_index = torch.arange(start=0, end=d_model, step=2).float()
-
-        div_term = 1/torch.tensor(10000.0)**(embedding_index / d_model)
-        
-        pe[:, 0::2] = torch.sin(position * div_term) 
-        pe[:, 1::2] = torch.cos(position * div_term) 
-
-        self.register_buffer('pe', pe) 
-
-    def forward(self, tokens):
-    
-        return tokens + self.pe[:tokens.size(1), :]
-    
-class Attention(nn.Module): 
-    
-    def __init__(self, d_model=1500):
-        
-        super().__init__()
-        
-        self.d_model=d_model
-
-        self.W_q = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
-        self.W_k = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
-        self.W_v = nn.Linear(in_features=d_model, out_features=d_model, bias=False)
-        
-        self.row_dim = 1
-        self.col_dim = 2
+    def generate_tokens(self, semantic_tokens, num_tokens = 10):
+        padded_semantic_tokens, padding_mask = self.pad_sequence(semantic_tokens, self.seq_len)
+        return super().generate_tokens(padded_semantic_tokens, padding_mask, num_tokens)
 
         
-    def forward(self, encodings_for_q, encodings_for_k, encodings_for_v, mask=None):
+class CoarseTransformer(Decoder):
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=2001, vocab_size = 3072, semantic_size = 499, coarse_size = 1502):
+        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size)
+        self.semantic_size = semantic_size
+        self.coarse_size = coarse_size
 
-        q = self.W_q(encodings_for_q)
-        k = self.W_k(encodings_for_k)
-        v = self.W_v(encodings_for_v)
+    def generate_tokens(self, semantic_tokens, coarse_tokens, num_tokens = 10):
+        padded_semantic_tokens, semantic_padding = self.pad_sequence(semantic_tokens, self.semantic_size)
+        padded_coarse_tokens, coarse_padding = self.pad_sequence(coarse_tokens, self.coarse_size)
+        sequence = torch.cat((padded_semantic_tokens, padded_coarse_tokens), dim=0)
 
-        sims = torch.matmul(q, k.transpose(dim0=self.row_dim, dim1=self.col_dim))
+        if semantic_padding != None and coarse_padding != None:
+            padding_mask = torch.cat((semantic_padding, coarse_padding), dim=1)
+        elif semantic_padding != None:
+            padding_needed = self.seq_len - semantic_padding.shape[1]
+            padding_mask = torch.cat([semantic_padding, torch.ones(1, padding_needed)], dim=1)
+        elif coarse_padding != None:
+            padding_needed = self.seq_len - coarse_padding.shape[1]
+            padding_mask = torch.cat([torch.ones(1, padding_needed), coarse_padding], dim=1)
 
-        scaled_sims = sims / torch.tensor(k.size(self.col_dim)**0.5)
+        else:
+            padding_mask = None
 
-        if mask is not None:
+        super().generate_tokens(sequence, padding_mask, num_tokens)
 
-            scaled_sims = scaled_sims.masked_fill(mask=mask, value=-1e9) 
+class FineTransformer(Decoder):
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1207, vocab_size = 8192, coarse_size = 453, fine_size = 754):
+        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size)
+        self.coarse_size = coarse_size
+        self.fine_size = fine_size
 
-        attention_percents = F.softmax(scaled_sims, dim=self.col_dim)
+    def generate_tokens(self, coarse_tokens, fine_tokens, num_tokens = 10):
+        padded_coarse_tokens, coarse_padding = self.pad_sequence(coarse_tokens, self.coarse_size)
+        padded_fine_tokens, fine_padding = self.pad_sequence(fine_tokens, self.fine_size)
+        sequence = torch.cat((padded_fine_tokens, padded_coarse_tokens), dim=0)
 
-        attention_scores = torch.matmul(attention_percents, v)
-        
-        return attention_scores
+        if fine_padding != None and coarse_padding != None:
+            padding_mask = torch.cat((coarse_padding, fine_padding), dim=1)
+        elif coarse_padding != None:
+            padding_needed = self.seq_len - coarse_padding.shape[1]
+            padding_mask = torch.cat([coarse_padding, torch.ones(1, padding_needed)], dim=1)
+        elif fine_padding != None:
+            padding_needed = self.seq_len - fine_padding.shape[1]
+            padding_mask = torch.cat([torch.ones(1, padding_needed), fine_padding], dim=1)
+        else:
+            padding_mask = None
 
-class DecoderOnlyTransformer(pl.LightningModule):
-    
-    def __init__(self, num_tokens=1500, d_model=1500, max_len=14000):
-        
-        super().__init__()
-    
-        
-        pl.seed_everything(seed=42)
-        self.num_tokens = num_tokens
-        self.we = nn.Embedding(num_embeddings=num_tokens, 
-                               embedding_dim=d_model)     
-        
-        self.pe = PositionEncoding(d_model=d_model, 
-                                   max_len=max_len)
-
-        self.self_attention = Attention(d_model=d_model)
-
-        self.fc_layer = nn.Linear(in_features=d_model, out_features=num_tokens)
-        
-        self.loss = nn.CrossEntropyLoss()
-        
-        
-    def forward(self, token_ids):
-                
-        word_embeddings = self.we(token_ids)        
-        position_encoded = self.pe(word_embeddings)
-        
-        mask = torch.tril(torch.ones((token_ids.size(1), token_ids.size(1)), device=self.device))
-
-        mask = mask == 0
-        
-        self_attention_values = self.self_attention(position_encoded, 
-                                                    position_encoded, 
-                                                    position_encoded, 
-                                                    mask=mask)
-                
-        residual_connection_values = position_encoded + self_attention_values
-        
-        fc_layer_output = self.fc_layer(residual_connection_values)
-        
-        return fc_layer_output
-    
-    
-    def configure_optimizers(self): 
-
-        return Adam(self.parameters(), lr=0.001)
-    
-    
-    def training_step(self, batch, batch_idx): 
-        input_tokens, labels = batch
-        output = self(input_tokens)
-        loss = self.loss(output.view(-1, output.size(-1)), labels.view(-1))
-        return loss
-'''
+        super().generate_tokens(sequence, padding_mask, num_tokens)

@@ -42,31 +42,36 @@ class LibriDataset(Dataset):
 
 class TokensDataset(Dataset):
 
-    def __init__(self, rootTokenDir, tokenFile, requiredDuration, Q = 8, Q_prime = 3, sampleRate = 16000, includeFileName = False, includeSemanticTokens = False, includeCoarseTokens = False, includeFineTokens = False, maxDur = 15000):
-        self.padToken = 0
-        self.validateParameters(rootTokenDir, tokenFile, requiredDuration, sampleRate)
-        self.tokenTypeFlags = (includeFileName, includeSemanticTokens, includeCoarseTokens, includeFineTokens)
+    def __init__(self, rootTokenDir, tokenFile, Q = 8, Q_prime = 3, sampleRate = 16000, mode = "semantic"):
+
+        self.validateParameters(rootTokenDir, tokenFile, mode, sampleRate)
         self.rootTokenDir = rootTokenDir
         self.tokenFile = tokenFile
-        self.maxDur = maxDur
-        match requiredDuration:
-            case 3:
+        self.sampleRate = sampleRate
+        self.mode = mode
+
+        match mode:
+            case "fine":
                 self.semanticLenght = 149
                 self.coarseLenght = int( 1208 * Q_prime / Q) 
-                self.fineLenght = int( 1208 * (Q - Q_prime) / Q) 
-            case 10:
+                self.fineLenght = int( 1208 * (Q - Q_prime) / Q)
+                self.tokenTypeFlags = (False, False, True, True)
+
+            case "coarse":
                 self.semanticLenght = 499
                 self.coarseLenght = int( 4008 * Q_prime / Q) 
                 self.fineLenght = int( 4008 * (Q - Q_prime) / Q) 
-            case 30:
+                self.tokenTypeFlags = (False, True, True, False)
+
+            case "semantic":
                 self.semanticLenght = 1499
                 self.coarseLenght = int( 12008 * Q_prime / Q) 
                 self.fineLenght = int( 12008 * (Q - Q_prime) / Q) 
+                self.tokenTypeFlags = (False, True, False, False)
                 
-        self.sampleRate = sampleRate
-        self.tokenList = self.createTokenList()
+        self.inputs, self.labels = self.createTokenList()
 
-    def validateParameters(self, rootTokenDir, tokenFile, requiredDuration, sampleRate):
+    def validateParameters(self, rootTokenDir, tokenFile, mode, sampleRate):
 
         if not os.path.exists(os.path.join(rootTokenDir, tokenFile)):
             raise ValueError("Invalid rootTokenDir. It should be a valid directory path.")
@@ -74,8 +79,8 @@ class TokensDataset(Dataset):
         if not tokenFile.endswith('.csv'):
             raise ValueError("Invalid tokenFile. It should be a valid CSV file name.")
         
-        if not isinstance(requiredDuration, (int, float)) or requiredDuration <= 0:
-            raise ValueError("Invalid requiredDuration. It should be a positive number.")
+        if mode != "semantic" and mode != "coarse" and mode != "fine":
+            raise ValueError("Invalid mode. It should be equal to semantic, coarse or fine")
         
         if not isinstance(sampleRate, int) or sampleRate <= 0:
             raise ValueError("Invalid sampleRate. It should be a positive integer.")
@@ -100,7 +105,8 @@ class TokensDataset(Dataset):
 
             header = next(reader, None)
 
-            data = []
+            inputs = []
+            labels = []
             for row in reader:
                 invalid_row = False
                 formatted_row = [ast.literal_eval(cell) if isinstance(cell, str) and cell.startswith('[') and cell.endswith(']') else cell for cell in row]
@@ -120,36 +126,28 @@ class TokensDataset(Dataset):
                             if end_idx < 0:
                                 invalid_row = True
                                 break
-                            #start_idx = random.randint(0, end_idx)
-                            if sampled_row == []:
-                                sampled_row = [cell[0:N]]
-                            else:
-                                sampled_row.append(cell[0:N])
+                            sampled_row.append(cell[0:N])
 
                 if not invalid_row:
-                    data.append(sampled_row)
+                    if len(sampled_row) == 1:
+                        inputs.append(torch.tensor(sampled_row[0][:-1]))
+                        labels.append(torch.tensor(sampled_row[0][1:]))
+                    else:
+                        inputs.append(torch.tensor(sampled_row[0] + sampled_row[1][:-1]))
+                        labels.append(torch.tensor(sampled_row[1][1:]))
 
-        return data
+        return inputs, labels
 
     def __len__(self):
-        return len(self.tokenList)
+        return len(self.inputs)
 
     def __getitem__(self, idx):
-        if idx >= len(self.tokenList):
+        if idx >= len(self.inputs):
             raise IndexError("Index out of range")
-        #THIS WORKS ONLY ON SEMANTIC + COARSE FOR NOW
-        concat_list = self.tokenList[idx][0] + self.tokenList[idx][1][:-1]
-        toPad = self.maxDur - len(concat_list)
-        padding = [0] * toPad
-        concat_list += padding
-        inputs = torch.tensor(concat_list)
-        labels = torch.tensor(self.tokenList[idx][1][1:])
-        mask = mask = (inputs != self.padToken)
-        return inputs, labels, mask
-    
-    def get_padToken(self):
-        return self.padToken
+        inputs = self.inputs[idx]
+        labels = self.labels[idx]
 
+        return inputs, labels
 
 def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5):
 

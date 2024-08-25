@@ -181,7 +181,8 @@ class Decoder(pl.LightningModule):
 
         generated_sequence = input_ids.unsqueeze(0)
         total_sequence = generated_sequence
-        padding_mask = padding_mask.unsqueeze(1)
+        if padding_mask != None:
+            padding_mask = padding_mask.unsqueeze(1)
         for _ in tqdm.tqdm(range(num_tokens)):
             with torch.no_grad():
 
@@ -233,6 +234,7 @@ class CoarseTransformer(Decoder):
     def generate_tokens(self, semantic_tokens, coarse_tokens, num_tokens = 10):
         padded_semantic_tokens, semantic_padding = self.pad_sequence(semantic_tokens, self.semantic_size)
         padded_coarse_tokens, coarse_padding = self.pad_sequence(coarse_tokens, self.coarse_size)
+        print(padded_semantic_tokens.shape,padded_coarse_tokens.shape)
         sequence = torch.cat((padded_semantic_tokens, padded_coarse_tokens), dim=0)
 
         if semantic_padding != None and coarse_padding != None:
@@ -243,7 +245,6 @@ class CoarseTransformer(Decoder):
         elif coarse_padding != None:
             padding_needed = self.seq_len - coarse_padding.shape[1]
             padding_mask = torch.cat([torch.ones(1, padding_needed), coarse_padding], dim=1)
-
         else:
             padding_mask = None
 

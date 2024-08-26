@@ -42,13 +42,14 @@ class LibriDataset(Dataset):
 
 class TokensDataset(Dataset):
 
-    def __init__(self, rootTokenDir, tokenFile, Q = 8, Q_prime = 3, sampleRate = 16000, mode = "semantic"):
+    def __init__(self, rootTokenDir, tokenFile, Q = 8, Q_prime = 3, sampleRate = 16000, mode = "semantic", removeSemanticDuplicates = True):
 
         self.validateParameters(rootTokenDir, tokenFile, mode, sampleRate)
         self.rootTokenDir = rootTokenDir
         self.tokenFile = tokenFile
         self.sampleRate = sampleRate
         self.mode = mode
+        self.removeSemanticDuplicates = removeSemanticDuplicates
 
         match mode:
             case "fine":
@@ -68,6 +69,9 @@ class TokensDataset(Dataset):
                 self.coarseLenght = int( 12008 * Q_prime / Q) 
                 self.fineLenght = int( 12008 * (Q - Q_prime) / Q) 
                 self.tokenTypeFlags = (False, True, False, False)
+
+            case _:
+                raise ValueError('Invalid mode. Valid values are either "semantic", "coarse" or "fine".')
                 
         self.inputs, self.labels = self.createTokenList()
 
@@ -84,6 +88,7 @@ class TokensDataset(Dataset):
         
         if not isinstance(sampleRate, int) or sampleRate <= 0:
             raise ValueError("Invalid sampleRate. It should be a positive integer.")
+
         
     def createTokenList(self):
         
@@ -122,11 +127,16 @@ class TokensDataset(Dataset):
                                 N = self.fineLenght
                             
                         if self.tokenTypeFlags[i]:
-                            end_idx = len(cell) - N
-                            if end_idx < 0:
+                            if len(cell) < N:
                                 invalid_row = True
                                 break
-                            sampled_row.append(cell[0:N])
+                                
+                            if i == 1 and self.removeSemanticDuplicates:
+                                processedCell, _ = TokensDataset.__removeDuplicates(cell[0:N])
+                            else:
+                                processedCell = cell[0:N]
+                                
+                            sampled_row.append(processedCell)
 
                 if not invalid_row:
                     if len(sampled_row) == 1:
@@ -136,7 +146,27 @@ class TokensDataset(Dataset):
                         inputs.append(torch.tensor(sampled_row[0] + sampled_row[1][:-1]))
                         labels.append(torch.tensor(sampled_row[1][1:]))
 
-        return inputs, labels
+        return inputs, labels 
+
+    @staticmethod
+    def __removeDuplicates(tokenList):
+     
+        PADDING_TOKEN = 0
+        
+        if not tokenList:
+            return []
+        
+        processedList = [tokenList[0]]
+        
+        for i in range(1,len(tokenList)):
+            if tokenList[i] != tokenList[i-1]:
+                processedList.append(tokenList[i])
+        
+        paddingLenght = len(tokenList) - len(processedList)
+        processedList = processedList + [PADDING_TOKEN for i in range(paddingLenght)]
+        
+        
+        return processedList, paddingLenght
 
     def __len__(self):
         return len(self.inputs)

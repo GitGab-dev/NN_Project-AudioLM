@@ -224,6 +224,28 @@ class SemanticTransformer(Decoder):
         padded_semantic_tokens, padding_mask = self.pad_sequence(semantic_tokens, self.seq_len)
         return super().generate_tokens(padded_semantic_tokens, padding_mask, num_tokens)
 
+    # Override of Decoder.common_step
+    def common_step(self, batch):
+        
+        input_ids, target_ids = batch
+
+        combined_mask = self.causal_mask * (input_ids != 0).float().unsqueeze(1).expand(-1, self.seq_len, self.seq_len)
+
+        output = self(input_ids, combined_mask)  # output shape: (batch_size, seq_len, vocab_size)
+        
+        batch_size, input_seq_len = input_ids.shape
+        target_seq_len = target_ids.shape[1]
+        
+        output_target = output[:, input_seq_len - target_seq_len:, :]  # I take only the tokens I need to check (for the coarse generation I take only the coarse generated)
+        
+        # Reshape for CrossEntropyLoss
+        output_target = output_target.reshape(-1, output_target.size(-1))  # (batch_size * target_seq_len, vocab_size)
+        target_ids= target_ids.reshape(-1) 
+
+        # Compute loss
+        loss = self.loss_fn(output_target, target_ids)
+        return loss, output_target, target_ids
+
         
 class CoarseTransformer(Decoder):
     def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=2001, vocab_size = 3072, semantic_size = 499, coarse_size = 1502):
@@ -234,7 +256,6 @@ class CoarseTransformer(Decoder):
     def generate_tokens(self, semantic_tokens, coarse_tokens, num_tokens = 10):
         padded_semantic_tokens, semantic_padding = self.pad_sequence(semantic_tokens, self.semantic_size)
         padded_coarse_tokens, coarse_padding = self.pad_sequence(coarse_tokens, self.coarse_size)
-        print(padded_semantic_tokens.shape,padded_coarse_tokens.shape)
         sequence = torch.cat((padded_semantic_tokens, padded_coarse_tokens), dim=0)
 
         if semantic_padding != None and coarse_padding != None:
@@ -248,7 +269,31 @@ class CoarseTransformer(Decoder):
         else:
             padding_mask = None
 
-        super().generate_tokens(sequence, padding_mask, num_tokens)
+        return super().generate_tokens(sequence, padding_mask, num_tokens)
+
+    # Override of Decoder.common_step
+    def common_step(self, batch):
+        
+        input_ids, target_ids = batch
+
+        combined_mask = self.causal_mask * (input_ids != 0).float().unsqueeze(1).expand(-1, self.seq_len, self.seq_len)
+
+        output = self(input_ids, combined_mask)  # output shape: (batch_size, seq_len, vocab_size)
+        
+        batch_size, input_seq_len = input_ids.shape
+        target_seq_len = target_ids.shape[1]
+        
+        output_target = output[:, input_seq_len - target_seq_len:, :]  # I take only the tokens I need to check (for the coarse generation I take only the coarse generated)
+        
+        # Reshape for CrossEntropyLoss
+        output_target = output_target.reshape(-1, output_target.size(-1))  # (batch_size * target_seq_len, vocab_size)
+        target_ids= target_ids.reshape(-1) 
+
+        # Compute loss
+        loss = self.loss_fn(output_target, target_ids)
+        return loss, output_target, target_ids
+
+    
 
 class FineTransformer(Decoder):
     def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1207, vocab_size = 8192, coarse_size = 453, fine_size = 754):
@@ -272,4 +317,4 @@ class FineTransformer(Decoder):
         else:
             padding_mask = None
 
-        super().generate_tokens(sequence, padding_mask, num_tokens)
+        return super().generate_tokens(sequence, padding_mask, num_tokens)

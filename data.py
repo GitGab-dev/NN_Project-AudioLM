@@ -58,18 +58,21 @@ class TokensDataset(Dataset):
                 self.coarseLenght = int( 604 * Q_prime / Q) 
                 self.fineLenght = int( 604 * (Q - Q_prime) / Q)
                 self.tokenTypeFlags = (False, False, True, True)
+                self.num_samples = 10
 
             case "coarse":
                 self.semanticLenght = 249
                 self.coarseLenght = int( 2004 * Q_prime / Q) 
                 self.fineLenght = 0
                 self.tokenTypeFlags = (False, True, True, False)
+                self.num_samples = 3
 
             case "semantic":
                 self.semanticLenght = 749
                 self.coarseLenght = 0
                 self.fineLenght = 0
                 self.tokenTypeFlags = (False, True, False, False)
+                self.num_samples = 1
 
             case _:
                 raise ValueError('Invalid mode. Valid values are either "semantic", "coarse" or "fine".')
@@ -127,36 +130,39 @@ class TokensDataset(Dataset):
                 
                 invalid_row = False
                 formatted_row = [ast.literal_eval(cell) if isinstance(cell, str) and cell.startswith('[') and cell.endswith(']') else cell for cell in row]
-                sampled_row = []
-                for i, cell in enumerate(formatted_row):
-                    if isinstance(cell, list):
-                        match i:
-                            case 1:
-                                N = self.semanticLenght
-                            case 2:
-                                N = self.coarseLenght
-                            case 3:
-                                N = self.fineLenght
-                            
-                        if self.tokenTypeFlags[i]:
-                            if len(cell) < N:
-                                invalid_row = True
-                                break
-                                
-                            if i == 1 and self.removeSemanticDuplicates:
-                                processedCell, _ = TokensDataset.__removeDuplicates(cell[0:N])
-                            else:
-                                processedCell = cell[0:N]
-                                
-                            sampled_row.append(processedCell)
 
-                if not invalid_row:
-                    if len(sampled_row) == 1:
-                        inputs.append(torch.tensor(sampled_row[0][:-1]))
-                        labels.append(torch.tensor(sampled_row[0][1:]))
-                    else:
-                        inputs.append(torch.tensor(sampled_row[0] + sampled_row[1][:-1]))
-                        labels.append(torch.tensor(sampled_row[1][1:]))
+                for j in range(self.num_samples):
+                    invalid_row = False
+                    sampled_row = []                    
+                    for i, cell in enumerate(formatted_row):
+                        if isinstance(cell, list):
+                            match i:
+                                case 1:
+                                    N = self.semanticLenght
+                                case 2:
+                                    N = self.coarseLenght
+                                case 3:
+                                    N = self.fineLenght
+                                
+                            if self.tokenTypeFlags[i]:
+                                if len(cell) < (j + 1) * N:
+                                    invalid_row = True
+                                    break
+                                    
+                                if i == 1 and self.removeSemanticDuplicates:
+                                    processedCell, _ = TokensDataset.__removeDuplicates(cell[j * N :(j + 1) * N])
+                                else:
+                                    processedCell = cell[j * N :(j + 1) * N]
+                                    
+                                sampled_row.append(processedCell)
+
+                    if not invalid_row:
+                        if len(sampled_row) == 1:
+                            inputs.append(torch.tensor(sampled_row[0][:-1]))
+                            labels.append(torch.tensor(sampled_row[0][1:]))
+                        else:
+                            inputs.append(torch.tensor(sampled_row[0] + sampled_row[1][:-1]))
+                            labels.append(torch.tensor(sampled_row[1][1:]))
 
         return inputs, labels 
 

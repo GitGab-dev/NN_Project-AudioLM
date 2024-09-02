@@ -12,6 +12,7 @@ import random
 from SoundStream import audio_to_tokens
 import re
 from torchaudio.datasets import LibriLightLimited
+import sys
 
 class LibriDataset(Dataset):
 
@@ -53,21 +54,21 @@ class TokensDataset(Dataset):
 
         match mode:
             case "fine":
-                self.semanticLenght = 149
-                self.coarseLenght = int( 1208 * Q_prime / Q) 
-                self.fineLenght = int( 1208 * (Q - Q_prime) / Q)
+                self.semanticLenght = 0
+                self.coarseLenght = int( 604 * Q_prime / Q) 
+                self.fineLenght = int( 604 * (Q - Q_prime) / Q)
                 self.tokenTypeFlags = (False, False, True, True)
 
             case "coarse":
-                self.semanticLenght = 499
-                self.coarseLenght = int( 4008 * Q_prime / Q) 
-                self.fineLenght = int( 4008 * (Q - Q_prime) / Q) 
+                self.semanticLenght = 249
+                self.coarseLenght = int( 2004 * Q_prime / Q) 
+                self.fineLenght = 0
                 self.tokenTypeFlags = (False, True, True, False)
 
             case "semantic":
-                self.semanticLenght = 1499
-                self.coarseLenght = int( 12008 * Q_prime / Q) 
-                self.fineLenght = int( 12008 * (Q - Q_prime) / Q) 
+                self.semanticLenght = 749
+                self.coarseLenght = 0
+                self.fineLenght = 0
                 self.tokenTypeFlags = (False, True, False, False)
 
             case _:
@@ -91,6 +92,8 @@ class TokensDataset(Dataset):
 
         
     def createTokenList(self):
+
+        prepareCsvSize()
         
         with open(os.path.join(self.rootTokenDir, self.tokenFile), mode='r', newline = '') as tokenFile:
 
@@ -112,7 +115,16 @@ class TokensDataset(Dataset):
 
             inputs = []
             labels = []
+
+            rowCounter = 0
+            
             for row in reader:
+
+                rowCounter+=1
+
+                if rowCounter == 242:
+                    return inputs, labels
+                
                 invalid_row = False
                 formatted_row = [ast.literal_eval(cell) if isinstance(cell, str) and cell.startswith('[') and cell.endswith(']') else cell for cell in row]
                 sampled_row = []
@@ -300,3 +312,16 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
             tokenData = []
                 
     return fileCount
+
+def prepareCsvSize():
+    maxInt = sys.maxsize
+    
+    while True:
+        # decrease the maxInt value by factor 10 
+        # as long as the OverflowError occurs.
+    
+        try:
+            csv.field_size_limit(maxInt)
+            break
+        except OverflowError:
+            maxInt = int(maxInt/10)

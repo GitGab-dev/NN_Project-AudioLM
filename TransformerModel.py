@@ -105,7 +105,7 @@ class DecoderLayer(nn.Module):
         return x
     
 class Decoder(pl.LightningModule):
-    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1500, vocab_size = 1500):
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1500, vocab_size = 1500, learning_rate = 10e-4):
         super().__init__()
         self.seq_len = seq_len
         self.embedding = nn.Embedding(vocab_size, d_model)
@@ -115,8 +115,9 @@ class Decoder(pl.LightningModule):
         ])
         self.norm = nn.LayerNorm(d_model)
         self.linear = nn.Linear(d_model, vocab_size)
+        self.learning_rate = learning_rate
         self.loss_fn = nn.CrossEntropyLoss()
-        self.optimizer = self.configure_optimizers()
+        self.optimizer = self.configure_optimizers()    
         self.automatic_optimization = False
         self.seq_len = seq_len
         self.causal_mask = torch.tril(torch.ones((seq_len, seq_len))).unsqueeze(0)
@@ -174,7 +175,7 @@ class Decoder(pl.LightningModule):
         torch.save(self.state_dict(), f"checkpoints/{self.__class__.__name__}_epoch={self.current_epoch:02d}.ckpt")
     
     def configure_optimizers(self):
-        optimizer = Adam(self.parameters(), lr=1e-4)  # Replace with your preferred optimizer
+        optimizer = Adam(self.parameters(), lr=self.learning_rate)  # Replace with your preferred optimizer
         return optimizer
 
     def generate_tokens(self, input_ids, padding_mask = None, num_tokens=10):
@@ -217,7 +218,7 @@ class Decoder(pl.LightningModule):
             raise ValueError(f"Invalid token lenght, shorten the input to match this size {lenght}")
 
 class SemanticTransformer(Decoder):
-    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1498, vocab_size = 1024):
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=749, vocab_size = 500, learning_rate = 10e-4):
         super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size)
 
     def generate_tokens(self, semantic_tokens, num_tokens = 10):
@@ -248,8 +249,8 @@ class SemanticTransformer(Decoder):
 
         
 class CoarseTransformer(Decoder):
-    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=2001, vocab_size = 3072, semantic_size = 499, coarse_size = 1502):
-        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size)
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=999, vocab_size = 3072, semantic_size = 249, coarse_size = 751, learning_rate = 10e-4):
+        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size, learning_rate)
         self.semantic_size = semantic_size
         self.coarse_size = coarse_size
 
@@ -296,7 +297,7 @@ class CoarseTransformer(Decoder):
     
 
 class FineTransformer(Decoder):
-    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1207, vocab_size = 8192, coarse_size = 453, fine_size = 754):
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=603, vocab_size = 8192, coarse_size = 226, fine_size = 377, learning_rate = 10e-4):
         super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size)
         self.coarse_size = coarse_size
         self.fine_size = fine_size

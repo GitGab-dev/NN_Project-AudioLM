@@ -16,10 +16,10 @@ import sys
 
 class LibriDataset(Dataset):
 
-    def __init__(self, audioDir, newSampleFreq, maxLenght):
+    def __init__(self, audioDir, newSampleFreq, maxlength):
         self.audioList = self.getAudioList(audioDir)
         self.resampler = Resample(new_freq=newSampleFreq)
-        self.maxLenght = maxLenght
+        self.maxlength = maxlength
 
     def getAudioList(self,audioDir):
         flac_files = []
@@ -37,13 +37,13 @@ class LibriDataset(Dataset):
     def __getitem__(self, idx):
         waveform, sampleRate = torchaudio.load(self.audioList[idx])
         waveformResampled = self.resampler(waveform)
-        waveformPadded = F.pad(waveformResampled, pad = (0,self.maxLenght - len(waveformResampled[0])))
+        waveformPadded = F.pad(waveformResampled, pad = (0,self.maxlength - len(waveformResampled[0])))
         
         return waveformPadded
 
 class TokensDataset(Dataset):
 
-    def __init__(self, rootTokenDir, tokenFile, Q = 8, Q_prime = 3, sampleRate = 16000, mode = "semantic", removeSemanticDuplicates = True):
+    def __init__(self, rootTokenDir, tokenFile, Q = 8, Q_prime = 3, sampleRate = 16000, mode = "semantic", removeSemanticDuplicates = True, row_limit = None, expected_audio_length = 60, crop_length = [30,10,3]):
 
         self.validateParameters(rootTokenDir, tokenFile, mode, sampleRate)
         self.rootTokenDir = rootTokenDir
@@ -51,28 +51,35 @@ class TokensDataset(Dataset):
         self.sampleRate = sampleRate
         self.mode = mode
         self.removeSemanticDuplicates = removeSemanticDuplicates
+        self.row_limit = row_limit
+
+        # expressed in seconds, they define the expected duration of input audio and the crop length in the three different modes (semantic, coarse and  fine)
+        
+        self.expected_audio_length = expected_audio_length
+        self.expected_crop_length = crop_length # CHANGE ME
 
         match mode:
-            case "fine":
-                self.semanticLenght = 0
-                self.coarseLenght = int( 604 * Q_prime / Q) 
-                self.fineLenght = int( 604 * (Q - Q_prime) / Q)
-                self.tokenTypeFlags = (False, False, True, True)
-                self.num_samples = 10
-
-            case "coarse":
-                self.semanticLenght = 249
-                self.coarseLenght = int( 2004 * Q_prime / Q) 
-                self.fineLenght = 0
-                self.tokenTypeFlags = (False, True, True, False)
-                self.num_samples = 3
-
+        
             case "semantic":
-                self.semanticLenght = 749
-                self.coarseLenght = 0
-                self.fineLenght = 0
+                self.semanticlength = int(50 * self.expected_crop_length[0] - 1)
+                self.coarselength = 0
+                self.finelength = 0
                 self.tokenTypeFlags = (False, True, False, False)
-                self.num_samples = 1
+                self.num_samples = int(self.expected_audio_length / self.expected_crop_length[0])
+                
+            case "coarse":
+                self.semanticlength = int(50 * self.expected_crop_length[1] - 1)
+                self.coarselength = int((50 * self.expected_crop_length[1] + 1) * Q_prime) 
+                self.finelength = 0
+                self.tokenTypeFlags = (False, True, True, False)
+                self.num_samples = int(self.expected_audio_length / self.expected_crop_length[1])
+                
+            case "fine":
+                self.semanticlength = 0
+                self.coarselength = int((50 * self.expected_crop_length[2] + 1) * Q_prime) 
+                self.finelength = int((50 * self.expected_crop_length[2] + 1) * (Q - Q_prime))
+                self.tokenTypeFlags = (False, False, True, True)
+                self.num_samples = int(self.expected_audio_length / self.expected_crop_length[2])
 
             case _:
                 raise ValueError('Invalid mode. Valid values are either "semantic", "coarse" or "fine".')
@@ -96,7 +103,8 @@ class TokensDataset(Dataset):
         
     def createTokenList(self):
 
-        prepareCsvSize()
+        # Increase CSV row size limit
+        prepare_csv_size()
         
         with open(os.path.join(self.rootTokenDir, self.tokenFile), mode='r', newline = '') as tokenFile:
 
@@ -119,14 +127,17 @@ class TokensDataset(Dataset):
             inputs = []
             labels = []
 
-            rowCounter = 0
+            row_counter = 0
             
             for row in reader:
 
-                rowCounter+=1
-
-                if rowCounter == 242:
+                
+                # stop when reached the row_limit, if set
+                
+                if self.row_limit and row_counter == self.row_limit:
                     return inputs, labels
+                    
+                row_counter += 1
                 
                 invalid_row = False
                 formatted_row = [ast.literal_eval(cell) if isinstance(cell, str) and cell.startswith('[') and cell.endswith(']') else cell for cell in row]
@@ -138,11 +149,11 @@ class TokensDataset(Dataset):
                         if isinstance(cell, list):
                             match i:
                                 case 1:
-                                    N = self.semanticLenght
+                                    N = self.semanticlength
                                 case 2:
-                                    N = self.coarseLenght
+                                    N = self.coarselength
                                 case 3:
-                                    N = self.fineLenght
+                                    N = self.finelength
                                 
                             if self.tokenTypeFlags[i]:
                                 if len(cell) < (j + 1) * N:
@@ -180,11 +191,11 @@ class TokensDataset(Dataset):
             if tokenList[i] != tokenList[i-1]:
                 processedList.append(tokenList[i])
         
-        paddingLenght = len(tokenList) - len(processedList)
-        processedList = processedList + [PADDING_TOKEN for i in range(paddingLenght)]
+        paddinglength = len(tokenList) - len(processedList)
+        processedList = processedList + [PADDING_TOKEN for i in range(paddinglength)]
         
         
-        return processedList, paddingLenght
+        return processedList, paddinglength
 
     def __len__(self):
         return len(self.inputs)
@@ -196,6 +207,20 @@ class TokensDataset(Dataset):
         labels = self.labels[idx]
 
         return inputs, labels
+
+    def __str__(self):
+        return f"self.rootTokenDir = {self.rootTokenDir}\n\
+        self.tokenFile = {self.tokenFile}\n\
+        self.sampleRate = {self.sampleRate}\n\
+        self.removeSemanticDuplicates = {self.removeSemanticDuplicates}\n\
+        self.row_limit = {self.row_limit}\n\
+        self.expected_audio_length = {self.expected_audio_length}\n\
+        self.expected_crop_length = {self.expected_crop_length}\n\
+        self.semanticlength = {self.semanticlength}\n\
+        self.coarselength = {self.coarselength}\n\
+        self.finelength = {self.finelength}\n\
+        self.num_samples = {self.num_samples}\n\
+        "
 
 def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5):
 
@@ -319,7 +344,7 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
                 
     return fileCount
 
-def prepareCsvSize():
+def prepare_csv_size():
     maxInt = sys.maxsize
     
     while True:

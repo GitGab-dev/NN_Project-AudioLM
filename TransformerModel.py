@@ -218,8 +218,10 @@ class Decoder(pl.LightningModule):
             raise ValueError(f"Invalid token lenght, shorten the input to match this size {lenght}")
 
 class SemanticTransformer(Decoder):
-    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=749, vocab_size = 500, learning_rate = 10e-4):
-        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size)
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, audioDuration = 30, vocab_size = 500, learning_rate = 10e-4):
+        
+        self.seq_len = int(50 * audioDuration - 2)
+        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, self.seq_len, vocab_size)
 
     def generate_tokens(self, semantic_tokens, num_tokens = 10):
         padded_semantic_tokens, padding_mask = self.pad_sequence(semantic_tokens, self.seq_len)
@@ -249,10 +251,15 @@ class SemanticTransformer(Decoder):
 
         
 class CoarseTransformer(Decoder):
-    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=999, vocab_size = 3072, semantic_size = 249, coarse_size = 751, learning_rate = 10e-4):
-        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size, learning_rate)
-        self.semantic_size = semantic_size
-        self.coarse_size = coarse_size
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, audioDuration = 10, Q_prime = 3, vocab_size = 3072, learning_rate = 10e-4):
+
+        self.semantic_size = int(50 * audioDuration - 1)
+        self.coarse_size = int((50 * audioDuration + 1) * Q_prime) - 1
+
+        self.seq_len = self.semantic_size + self.coarse_size
+        
+        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, self.seq_len, vocab_size, learning_rate)
+        
 
     def generate_tokens(self, semantic_tokens, coarse_tokens, num_tokens = 10):
         padded_semantic_tokens, semantic_padding = self.pad_sequence(semantic_tokens, self.semantic_size)
@@ -297,10 +304,14 @@ class CoarseTransformer(Decoder):
     
 
 class FineTransformer(Decoder):
-    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=603, vocab_size = 8192, coarse_size = 226, fine_size = 377, learning_rate = 10e-4):
-        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, seq_len, vocab_size)
-        self.coarse_size = coarse_size
-        self.fine_size = fine_size
+    def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, audioDuration = 3, Q_prime = 3, Q = 8, vocab_size = 8192, learning_rate = 10e-4):
+
+        self.coarse_size = int((50 * audioDuration + 1) * Q_prime)
+        self.fine_size = int((50 * audioDuration + 1) * (Q - Q_prime) - 1)
+        self.seq_len = self.coarse_size + self.fine_size 
+        
+        super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, self.seq_len, vocab_size)
+        
 
     def generate_tokens(self, coarse_tokens, fine_tokens, num_tokens = 10):
         padded_coarse_tokens, coarse_padding = self.pad_sequence(coarse_tokens, self.coarse_size)

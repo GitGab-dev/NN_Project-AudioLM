@@ -7,7 +7,9 @@ from typing import List
 import tqdm
 import os
 import csv 
+from torchviz import make_dot
 
+'''
 class RelativePosition(nn.Module):
 
     def __init__(self, d_model: int, nhead: int):
@@ -25,62 +27,124 @@ class RelativePosition(nn.Module):
         final_matrix = distance_matrix_clipped + self.d_model - 1
         embeddings = self.relative_position_bias_table[final_matrix.to(torch.long)]
         return embeddings
-    
+'''
+class RelativePosition(nn.Module):
+
+    def __init__(self, d_a: int, k: int):
+        """
+        Initialize the RelativePosition module.
+
+        Args:
+        - d_a (int): Number of dimensions in the relative position embeddings.
+        - k (int): Clipping distance.
+        """
+        super().__init__()
+        self.d_a = d_a
+        self.k = k
+        self.position_embeddings = nn.Parameter(torch.empty((2 * k + 1, d_a)))
+        nn.init.xavier_uniform_(self.position_embeddings)
+
+    def forward(self, length_query: int, length_key: int) -> torch.Tensor:
+        """
+        Compute relative position embeddings.
+
+        Args:
+        - length_query (int): Length of the query sequence.
+        - length_key (int): Length of the key sequence.
+
+        Returns:
+        - embeddings (torch.Tensor): Relative position embeddings (length_query, length_key, embedding_dim).
+        """
+        # Generate relative position embeddings
+        indices_query = torch.arange(length_query, device=self.position_embeddings.device)
+        indices_key = torch.arange(length_key, device=self.position_embeddings.device)
+        distance_matrix = indices_key.unsqueeze(0) - indices_query.unsqueeze(1)
+        distance_matrix_clipped = torch.clamp(distance_matrix, -self.k, self.k)
+        final_matrix = distance_matrix_clipped + self.k
+        embeddings = self.position_embeddings[final_matrix.to(torch.long)]
+
+        return embeddings
+
 
 
 class AttentionHead(nn.Module):
 
-    def __init__(self, hidden_size, d_model, k_bias_matrix, v_bias_matrix):
+    def __init__(self, hidden_size, d_model):
         super().__init__()
         self.d_model = d_model
         self.query_weights: nn.Linear = nn.Linear(hidden_size, self.d_model)
         self.key_weights: nn.Linear = nn.Linear(hidden_size, self.d_model)
         self.value_weights: nn.Linear = nn.Linear(hidden_size, self.d_model)
-        self.k_bias_matrix = k_bias_matrix
-        self.v_bias_matrix = v_bias_matrix
+        
+    def forward(self, queryIn: torch.Tensor, keyIn: torch.Tensor, valueIn: torch.Tensor, maskIn: torch.Tensor = None, k_bias_matrix: torch.Tensor = None, v_bias_matrix: torch.Tensor = None) -> torch.Tensor:
 
-    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
-        query: torch.Tensor = self.query_weights(query) # (b_s, n_t, head_dim)
-        key: torch.Tensor = self.key_weights(key) # (b_s, n_t, head_dim)
-        value: torch.Tensor = self.value_weights(value) # (b_s, n_t, head_dim)
+        #self.k_bias_matrix = torch.randn_like(self.k_bias_matrix)
+        #self.v_bias_matrix = torch.randn_like(self.v_bias_matrix)
+       
+        query: torch.Tensor = self.query_weights(queryIn) # (b_s, n_t, head_dim)
+        key: torch.Tensor = self.key_weights(keyIn) # (b_s, n_t, head_dim)
+        value: torch.Tensor = self.value_weights(valueIn) # (b_s, n_t, head_dim)
         # Self-Attention scores
         attn_1: torch.Tensor = torch.matmul(query, key.transpose(1, 2)) # Q*K^T:(b_s, n_t, n_t)
-        # Relative Position Attention scores
-        attn_2: torch.Tensor = torch.matmul(query.permute(1, 0, 2), self.k_bias_matrix.transpose(1, 2)).transpose(0, 1) # Q*K_shifting^T:(b_s, n_t, n_t)
+
+        if k_bias_matrix is None:
+            # Create a zero tensor with the appropriate shape if k_bias_matrix is not provided
+            k_bias_matrix = torch.zeros_like(attn_1, device=query.device)
+            
+        # Relative Position Attention scoresprint(
+        attn_2: torch.Tensor = torch.matmul(query.transpose(0, 1), k_bias_matrix.transpose(1, 2)).transpose(0, 1) # Q*K_shifting^T:(b_s, n_t, n_t)
         # Relation-aware Self-Attention scores
         att_scores: torch.Tensor = (attn_1 + attn_2)/(self.d_model ** 0.5)
-        if mask is not None:
-            mask = mask.to(torch.int)
-            att_scores: torch.Tensor = att_scores.masked_fill(mask == 0, -1e9)
-        att_weights: torch.Tensor = F.softmax(att_scores, dim=-1)
+        if maskIn is not None:
+            mask = maskIn.to(torch.int)
+            att_scores_filled: torch.Tensor = att_scores.masked_fill(mask == 0, -1e9)
+        else:
+            att_scores_filled: torch.Tensor = att_scores
+        att_weights: torch.Tensor = F.softmax(att_scores_filled, dim=-1)
         # Weighted sum of values
         values_1: torch.Tensor = torch.matmul(att_weights, value) # (b_s, n_t, head_dim)
+        
         # Relative Position Representation for values
-        values_2: torch.Tensor = torch.matmul(att_weights.permute(1, 0, 2), self.v_bias_matrix).transpose(0, 1) # (b_s, n_t, head_dim)
+        if v_bias_matrix is None:
+            # Create a zero tensor with the appropriate shape if v_bias_matrix is not provided
+            v_bias_matrix = torch.zeros_like(values_1, device=query.device)
+            
+        values_2: torch.Tensor = torch.matmul(att_weights.transpose(0, 1), v_bias_matrix).transpose(0, 1) # (b_s, n_t, head_dim)
         # Relation-aware values
         n_value  = values_1 + values_2
         return n_value
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, hidden_size = 1024, num_heads = 16, k = 64, seq_len = 1500):
+    def __init__(self, hidden_size =1024, num_heads=16, k=64, seq_len=1500):
         super().__init__()
+        self.seq_len = seq_len
         self.hidden_size: int = hidden_size
         self.num_heads: int = num_heads
         self.head_dim: int = hidden_size // num_heads
         assert hidden_size % num_heads == 0, "hidden_size must be divisible by num_heads"
-        self.relative_position_k: torch.Tensor = RelativePosition(self.head_dim, k)
-        self.relative_position_v: torch.Tensor = RelativePosition(self.head_dim, k)
-        self.k_bias_matrix: torch.Tensor = self.relative_position_k(seq_len, seq_len)
-        self.v_bias_matrix: torch.Tensor = self.relative_position_v(seq_len, seq_len)
-        self.attention_heads: nn.ModuleList = nn.ModuleList([AttentionHead(self.hidden_size, self.head_dim, self.k_bias_matrix, self.v_bias_matrix) for _ in range(self.num_heads)])
-        self.fc: nn.Linear = nn.Linear(hidden_size, hidden_size)
+        
+        # Learnable relative position embeddings
+        self.relative_position_k = RelativePosition(self.head_dim, k)
+        self.relative_position_v = RelativePosition(self.head_dim, k)
+
+        # Multi-head attention layers
+        self.attention_heads = nn.ModuleList([AttentionHead(self.hidden_size, self.head_dim) for _ in range(self.num_heads)])
+        self.fc = nn.Linear(hidden_size, hidden_size)
 
     def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
-        attention_outputs: List[torch.Tensor] = [attention_head(query, key, value, mask=mask) for attention_head in self.attention_heads]
+        # Recompute bias matrices using learned position embeddings
+        k_bias_matrix = self.relative_position_k(self.seq_len, self.seq_len)  # These are derived from learnable embeddings
+        v_bias_matrix = self.relative_position_v(self.seq_len, self.seq_len)
+
+        # Pass through each attention head
+        attention_outputs: List[torch.Tensor] = [attention_head(query, key, value, mask, k_bias_matrix, v_bias_matrix)
+                                                 for attention_head in self.attention_heads]
+
         hidden_state: torch.Tensor = torch.cat(attention_outputs, dim=-1)
-        hidden_state: torch.Tensor = self.fc(hidden_state)
-        return hidden_state
+        hidden_state_final: torch.Tensor = self.fc(hidden_state)
+
+        return hidden_state_final
 
 class DecoderLayer(nn.Module):
     def __init__(self, d_model=1024, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1500):
@@ -96,13 +160,14 @@ class DecoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask: torch.Tensor = None):
+        
         # Multi-head attention
         attn_output = self.attention(x, x, x, mask)
-        x = self.layer_norm1(x + self.dropout(attn_output))
+        x_attended = self.layer_norm1(x + self.dropout(attn_output))
         # Feed-forward network
-        ff_output = self.feed_forward(x)
-        x = self.layer_norm2(x + self.dropout(ff_output))
-        return x
+        ff_output = self.feed_forward(x_attended)
+        x_final = self.layer_norm2(x_attended + self.dropout(ff_output))
+        return x_final
     
 class Decoder(pl.LightningModule):
     def __init__(self, d_model=1024, num_layers = 12, num_heads=16, dim_feedforward=4096, dropout=0.1, k=64, seq_len=1500, vocab_size = 1500, learning_rate = 10e-4):
@@ -119,10 +184,11 @@ class Decoder(pl.LightningModule):
         self.loss_fn = nn.CrossEntropyLoss()
         self.optimizer = self.configure_optimizers()    
         self.automatic_optimization = False
-        self.seq_len = seq_len
-        self.causal_mask = torch.tril(torch.ones((seq_len, seq_len))).unsqueeze(0)
+        self.causal_mask = torch.tril(torch.ones((seq_len, seq_len))).unsqueeze(0).detach()
+        self.causal_mask.requires_grad = False
 
     def forward(self, x, mask: torch.Tensor = None):
+        
         x = self.embedding(x)
         for layer in self.layers:
             x = layer(x, mask)
@@ -133,7 +199,8 @@ class Decoder(pl.LightningModule):
     def common_step(self, batch):
         input_ids, target_ids = batch
 
-        output = self(input_ids, self.causal_mask)  # output shape: (batch_size, seq_len, vocab_size)
+        with torch.autograd.set_detect_anomaly(True):
+            output = self(input_ids, self.causal_mask)  # output shape: (batch_size, seq_len, vocab_size)
         
         batch_size, input_seq_len = input_ids.shape
         target_seq_len = target_ids.shape[1]
@@ -141,23 +208,28 @@ class Decoder(pl.LightningModule):
         output_target = output[:, input_seq_len - target_seq_len:, :]  # I take only the tokens I need to check (for the coarse generation I take only the coarse generated)
         
         # Reshape for CrossEntropyLoss
-        output_target = output_target.reshape(-1, output_target.size(-1))  # (batch_size * target_seq_len, vocab_size)
-        target_ids= target_ids.reshape(-1) 
+        output_target_reshaped = output_target.reshape(-1, output_target.size(-1))  # (batch_size * target_seq_len, vocab_size)
+        target_ids_reshaped= target_ids.reshape(-1) 
 
         # Compute loss
-        loss = self.loss_fn(output_target, target_ids)
-        return loss, output_target, target_ids
+        loss = self.loss_fn(output_target_reshaped, target_ids_reshaped)
+
+        
+        return loss, output_target_reshaped, target_ids_reshaped
         
     def training_step(self, batch, batch_idx):
-        
+
+        self.optimizer.zero_grad()
+
         loss, _, _ = self.common_step(batch)
-
+        
         self.log('train_loss', loss)
-
-        self.manual_backward(loss, retain_graph=True)
+        
+        with torch.autograd.set_detect_anomaly(True):
+            self.manual_backward(loss, retain_graph=False)
 
         self.optimizer.step()
-        self.optimizer.zero_grad()
+        
 
         return loss
         
@@ -175,7 +247,7 @@ class Decoder(pl.LightningModule):
         torch.save(self.state_dict(), f"checkpoints/{self.__class__.__name__}_epoch={self.current_epoch:02d}.ckpt")
     
     def configure_optimizers(self):
-        optimizer = Adam(self.parameters(), lr=self.learning_rate)  # Replace with your preferred optimizer
+        optimizer = Adam(self.parameters(), lr=self.learning_rate, weight_decay = 1e-4)  # Replace with your preferred optimizer
         return optimizer
 
     def generate_tokens(self, input_ids, padding_mask = None, num_tokens=10):
@@ -266,12 +338,12 @@ class CoarseTransformer(Decoder):
         padded_coarse_tokens, coarse_padding = self.pad_sequence(coarse_tokens, self.coarse_size)
         sequence = torch.cat((padded_semantic_tokens, padded_coarse_tokens), dim=0)
 
-        if semantic_padding != None and coarse_padding != None:
+        if semantic_padding is not None and coarse_padding is not None:
             padding_mask = torch.cat((semantic_padding, coarse_padding), dim=1)
-        elif semantic_padding != None:
+        elif semantic_padding is not None:
             padding_needed = self.seq_len - semantic_padding.shape[1]
             padding_mask = torch.cat([semantic_padding, torch.ones(1, padding_needed)], dim=1)
-        elif coarse_padding != None:
+        elif coarse_padding is not None:
             padding_needed = self.seq_len - coarse_padding.shape[1]
             padding_mask = torch.cat([torch.ones(1, padding_needed), coarse_padding], dim=1)
         else:

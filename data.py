@@ -14,6 +14,7 @@ import re
 from torchaudio.datasets import LibriLightLimited
 import sys
 
+myDevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class LibriDataset(Dataset):
 
     def __init__(self, audioDir, newSampleFreq, maxlength):
@@ -164,16 +165,17 @@ class TokensDataset(Dataset):
                                     processedCell, _ = TokensDataset.__removeDuplicates(cell[j * N :(j + 1) * N])
                                 else:
                                     processedCell = cell[j * N :(j + 1) * N]
+                                    processedCell = [elem % 1024 for elem in processedCell]
                                     
                                 sampled_row.append(processedCell)
 
                     if not invalid_row:
                         if len(sampled_row) == 1:
-                            inputs.append(torch.tensor(sampled_row[0][:-1]))
-                            labels.append(torch.tensor(sampled_row[0][1:]))
+                            inputs.append(torch.tensor(sampled_row[0][:-1]).to(myDevice))
+                            labels.append(torch.tensor(sampled_row[0][1:]).to(myDevice))
                         else:
-                            inputs.append(torch.tensor(sampled_row[0] + sampled_row[1][:-1]))
-                            labels.append(torch.tensor(sampled_row[1][1:]))
+                            inputs.append(torch.tensor(sampled_row[0] + sampled_row[1][:-1]).to(myDevice))
+                            labels.append(torch.tensor(sampled_row[1][1:]).to(myDevice))
 
         return inputs, labels 
 
@@ -287,7 +289,7 @@ def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckp
     return fileCount
 
 
-def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5, subset = "10h"):
+def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5, subset = "10h", lenght = None):
     Path(outDir).mkdir(parents=True, exist_ok=True)
 
     isNewFile = not os.path.exists(os.path.join(outDir, outFile))
@@ -311,7 +313,14 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
     Path("./librilight").mkdir(parents=True, exist_ok=True)
     dataset = LibriLightLimited("./librilight", download=True, subset= subset)
 
-    for i, (waveform, sr, transcript, spid, chid, utid) in enumerate(dataset):
+    indices = list(range(len(dataset)))
+    if lenght != None:
+        random.seed(42)
+        random.shuffle(indices)
+        currentLenght = 0
+        neededLenght = lenght * 60 * 60
+    for i in indices:
+        waveform, sr, transcript, spid, chid, utid = dataset[i]
         file = f"{spid} {chid} {utid}"
         reachedCheckpoint = (fileChecked == 0 or file == lastFile or reachedCheckpoint)
         
@@ -320,12 +329,15 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
             with torch.no_grad():
                 semanticTokens, _ = w2vBERT(waveform)
                 coarseTokens, fineTokens = audio_to_tokens(waveform, soundStream)
-                
+            
+            if lenght != None:
+                currentLenght += waveform.shape[-1] / sr
+
             tokenData.append([file, semanticTokens.tolist(), coarseTokens.tolist(), fineTokens.tolist()])
 
             fileCount += 1
 
-        if fileCount % fileCountCheckpoint == 0 and reachedCheckpoint and file != lastFile:
+        if (fileCount % fileCountCheckpoint == 0 and reachedCheckpoint and file != lastFile) or (lenght != None and currentLenght >= neededLenght):
             with open(os.path.join(outDir, outFile), mode='a', newline='') as outFD, open(os.path.join(outDir, "checkpoint.txt"), mode='w', newline='') as checkpointFile:
                 writer = csv.writer(outFD, delimiter = ";")
 
@@ -341,7 +353,9 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
                 
             print(f"SAVED {fileCount} AUDIO ON OUTPUT {os.path.join(outDir, outFile)}. Total of {fileCount + fileChecked} records saved.") 
             tokenData = []
-                
+        if lenght != None and currentLenght >= neededLenght:
+            break
+
     return fileCount
 
 def prepare_csv_size():

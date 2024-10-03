@@ -431,15 +431,16 @@ def generate_new_sequence(semantic_tokens, coarse_tokens, fine_tokens, semantic_
             i = coarse_tokens.shape[0]//max_coarse
             current_coarse = coarse_tokens[i*max_coarse:]
             current_semantic = total_semantic[i*max_sem:(i+1)*max_sem]
+            i = i * 2
             while coarse_to_generate > 0:
                 new_coarse = coarse_model.generate_tokens(current_semantic, current_coarse).squeeze(0)
                 generated = new_coarse.shape[0] - current_coarse.shape[0] 
                 coarse_to_generate = coarse_to_generate - generated
                 coarse_tokens = torch.cat([coarse_tokens, new_coarse[current_coarse.shape[0]:]], dim=0)
-                current_coarse = new_coarse[current_coarse.shape[0]:]
+                current_coarse = coarse_tokens[-max_coarse//2:]
                 i = i + 1
-                if i*max_sem < total_semantic.shape[0]:
-                    current_semantic = total_semantic[i*max_sem:(i+1)*max_sem]
+                if i*max_sem//2 < total_semantic.shape[0]:
+                    current_semantic = total_semantic[i*max_sem//2:(i+1)*max_sem//2]
                 else:
                     break
 
@@ -452,15 +453,16 @@ def generate_new_sequence(semantic_tokens, coarse_tokens, fine_tokens, semantic_
             i = fine_tokens.shape[0]//max_fine
             current_fine = fine_tokens[i*max_fine:]
             current_coarse = coarse_tokens[i*max_coarse:(i+1)*max_coarse]
+            i = i * 2
             while fine_to_generate > 0:
                 new_fine = fine_model.generate_tokens(current_coarse, current_fine).squeeze(0)
                 generated = new_fine.shape[0] - current_fine.shape[0] 
                 fine_to_generate = fine_to_generate - generated
                 fine_tokens = torch.cat([fine_tokens, new_fine[current_fine.shape[0]:]], dim=0)
-                current_fine = new_fine[current_fine.shape[0]:]
+                current_fine = new_fine[-max_fine//2:]
                 i = i + 1
-                if i*max_coarse < coarse_tokens.shape[0]:
-                    current_coarse = coarse_tokens[i*max_coarse:(i+1)*max_coarse]
+                if i*max_coarse//2 < coarse_tokens.shape[0]:
+                    current_coarse = coarse_tokens[i*max_coarse//2:(i+1)*max_coarse//2]
                 else:
                     break
         

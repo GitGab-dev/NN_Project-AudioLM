@@ -201,7 +201,7 @@ class Decoder(pl.LightningModule):
         optimizer = Adam(self.parameters(), lr=self.learning_rate, weight_decay=1e-4)
         return optimizer
 
-    def generate_tokens(self, input_ids, padding_mask=None, num_tokens=10):
+    def generate_tokens(self, input_ids, padding_mask=None, num_tokens=10, cut_value = 0):
         input_ids = input_ids.to(self.myDevice)
         generated_sequence = input_ids.unsqueeze(0).to(self.myDevice)
         total_sequence = generated_sequence
@@ -220,8 +220,16 @@ class Decoder(pl.LightningModule):
                 next_token_logits = output[:, -1, :]
                 probs = F.softmax(next_token_logits, dim=-1)
                 next_token = torch.argmax(probs, dim=-1)
-                
-                total_sequence = torch.cat((total_sequence, next_token.unsqueeze(0)), dim=1)
+
+                first_free_spot = (padding_mask[0, 0, cut_value:] == 0).nonzero(as_tuple=True)
+                if len(first_free_spot[0]) > 0:
+                    position = cut_value + first_free_spot[0][0]
+                    total_sequence[0, position] = next_token
+                    padding_mask[0, 0, position] = 1
+                else:
+                    # If no free spot, append to the end
+                    total_sequence = torch.cat((total_sequence, next_token.unsqueeze(0)), dim=1)
+
                 generated_sequence = torch.cat((generated_sequence[:, 1:], next_token.unsqueeze(0)), dim=1)
 
         return total_sequence
@@ -244,9 +252,14 @@ class SemanticTransformer(Decoder):
         self.seq_len = int(50 * audioDuration - 2)
         super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, self.seq_len, vocab_size, learning_rate, myDevice)
         self.myDevice = myDevice
+    
+    def get_seq_len(self):
+        return self.seq_len
 
-    def generate_tokens(self, semantic_tokens, num_tokens=10):
+    def generate_tokens(self, semantic_tokens, num_tokens=None):
         semantic_tokens = semantic_tokens.to(self.myDevice)
+        if num_tokens == None:
+            num_tokens = semantic_tokens.shape[0] - self.seq_len
         padded_semantic_tokens, padding_mask = self.pad_sequence(semantic_tokens, self.seq_len)
         return super().generate_tokens(padded_semantic_tokens, padding_mask, num_tokens)
 
@@ -277,14 +290,25 @@ class CoarseTransformer(Decoder):
         self.coarse_size = int((50 * audioDuration + 1) * Q_prime) - 1
         self.seq_len = self.semantic_size + self.coarse_size
         self.myDevice = myDevice
+        self.Q_prime = Q_prime
         
         super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, self.seq_len, vocab_size, learning_rate, myDevice)
 
-    def generate_tokens(self, semantic_tokens, coarse_tokens, num_tokens=10):
+    def get_semantic_size(self):
+        return self.semantic_size
+    def get_coarse_size(self):
+        return self.coarse_size
+    
+    def generate_tokens(self, semantic_tokens, coarse_tokens, num_tokens=None):
         # Ensure tokens are moved to the correct myDevice
         semantic_tokens = semantic_tokens.to(self.myDevice)
         coarse_tokens = coarse_tokens.to(self.myDevice)
         
+        if semantic_tokens.shape[0] > self.semantic_size:
+            semantic_tokens = semantic_tokens[:self.semantic_size]
+
+        if num_tokens == None:
+            num_tokens = coarse_tokens.shape[0] - self.coarse_size
         padded_semantic_tokens, semantic_padding = self.pad_sequence(semantic_tokens, self.semantic_size)
         padded_coarse_tokens, coarse_padding = self.pad_sequence(coarse_tokens, self.coarse_size)
         sequence = torch.cat((padded_semantic_tokens, padded_coarse_tokens), dim=0).to(self.myDevice)
@@ -300,7 +324,12 @@ class CoarseTransformer(Decoder):
         else:
             padding_mask = None
 
-        return super().generate_tokens(sequence, padding_mask, num_tokens)
+        total_token_sequence = super().generate_tokens(sequence, padding_mask, num_tokens, self.semantic_size)
+        coarse_sequence = total_token_sequence[:, self.semantic_size:]
+        while coarse_sequence.shape[1] % self.Q_prime != 0:
+            coarse_sequence = coarse_sequence[:, :-1]
+        return coarse_sequence
+        
 
     # Override of Decoder.common_step
     def common_step(self, batch):
@@ -332,17 +361,28 @@ class FineTransformer(Decoder):
         self.fine_size = int((50 * audioDuration + 1) * (Q - Q_prime) - 1)
         self.seq_len = self.coarse_size + self.fine_size
         self.myDevice = myDevice
-        
+        self.Q = Q
+        self.Q_prime = Q_prime
         super().__init__(d_model, num_layers, num_heads, dim_feedforward, dropout, k, self.seq_len, vocab_size, learning_rate, myDevice)
 
-    def generate_tokens(self, coarse_tokens, fine_tokens, num_tokens=10):
+    def get_coarse_size(self):
+        return self.coarse_size
+    def get_fine_size(self):
+        return self.fine_size
+    
+    def generate_tokens(self, coarse_tokens, fine_tokens, num_tokens=None):
         # Ensure tokens are moved to the correct myDevice
         coarse_tokens = coarse_tokens.to(self.myDevice)
         fine_tokens = fine_tokens.to(self.myDevice)
-        
+
+        if coarse_tokens.shape[0] > self.coarse_size:
+            coarse_tokens = coarse_tokens[:self.coarse_size]
+
+        if num_tokens == None:
+            num_tokens = fine_tokens.shape[0] - self.fine_size
         padded_coarse_tokens, coarse_padding = self.pad_sequence(coarse_tokens, self.coarse_size)
         padded_fine_tokens, fine_padding = self.pad_sequence(fine_tokens, self.fine_size)
-        sequence = torch.cat((padded_fine_tokens, padded_coarse_tokens), dim=0).to(self.myDevice)
+        sequence = torch.cat((padded_coarse_tokens, padded_fine_tokens), dim=0).to(self.myDevice)
 
         if fine_padding is not None and coarse_padding is not None:
             padding_mask = torch.cat((coarse_padding, fine_padding), dim=1).to(self.myDevice)
@@ -355,4 +395,76 @@ class FineTransformer(Decoder):
         else:
             padding_mask = None
 
-        return super().generate_tokens(sequence, padding_mask, num_tokens)
+        total_token_sequence = super().generate_tokens(sequence, padding_mask, num_tokens, self.coarse_size)
+        fine_sequence = total_token_sequence[:, self.coarse_size:]
+        while fine_sequence.shape[1] % (self.Q - self.Q_prime) != 0:
+            fine_sequence = fine_sequence[:, :-1]
+        return fine_sequence
+
+
+def generate_new_sequence(semantic_tokens, coarse_tokens, fine_tokens, semantic_model, coarse_model, fine_model, audioDuration, Q = 8, Q_prime = 3):
+
+    semanticlength = int(50 * audioDuration)
+    coarselength = int((50 * audioDuration + 1) * Q_prime)
+    finelength = int((50 * audioDuration + 1) * (Q - Q_prime))
+    
+    with torch.no_grad():
+
+        print("Generating semantic tokens...")
+
+        semantic_to_generate = semanticlength - semantic_tokens.shape[0]
+        max_sem = semantic_model.get_seq_len()
+        if semantic_to_generate > 0:
+            i = semantic_tokens.shape[0]//max_sem
+            current_semantic =  semantic_tokens[i*max_sem:]
+            new_semantic = semantic_model.generate_tokens(current_semantic, semantic_to_generate).squeeze(0)
+            total_semantic = torch.cat([semantic_tokens[:i*max_sem], new_semantic], dim=0)
+        else:
+            total_semantic = semantic_tokens
+
+        print("Generating coarse tokens...")
+
+        coarse_to_generate = coarselength - coarse_tokens.shape[0]
+        max_coarse = coarse_model.get_coarse_size()
+        max_sem = coarse_model.get_semantic_size()
+        if coarse_to_generate > 0:
+            i = coarse_tokens.shape[0]//max_coarse
+            current_coarse = coarse_tokens[i*max_coarse:]
+            current_semantic = total_semantic[i*max_sem:(i+1)*max_sem]
+            while coarse_to_generate > 0:
+                new_coarse = coarse_model.generate_tokens(current_semantic, current_coarse).squeeze(0)
+                generated = new_coarse.shape[0] - current_coarse.shape[0] 
+                coarse_to_generate = coarse_to_generate - generated
+                coarse_tokens = torch.cat([coarse_tokens, new_coarse[current_coarse.shape[0]:]], dim=0)
+                current_coarse = new_coarse[current_coarse.shape[0]:]
+                i = i + 1
+                if i*max_sem < total_semantic.shape[0]:
+                    current_semantic = total_semantic[i*max_sem:(i+1)*max_sem]
+                else:
+                    break
+
+        print("Generating fine tokens...")
+
+        fine_to_generate = finelength - fine_tokens.shape[0]
+        max_coarse = fine_model.get_coarse_size()
+        max_fine = fine_model.get_fine_size()
+        if fine_to_generate > 0:
+            i = fine_tokens.shape[0]//max_fine
+            current_fine = fine_tokens[i*max_fine:]
+            current_coarse = coarse_tokens[i*max_coarse:(i+1)*max_coarse]
+            while fine_to_generate > 0:
+                new_fine = fine_model.generate_tokens(current_coarse, current_fine).squeeze(0)
+                generated = new_fine.shape[0] - current_fine.shape[0] 
+                fine_to_generate = fine_to_generate - generated
+                fine_tokens = torch.cat([fine_tokens, new_fine[current_fine.shape[0]:]], dim=0)
+                current_fine = new_fine[current_fine.shape[0]:]
+                i = i + 1
+                if i*max_coarse < coarse_tokens.shape[0]:
+                    current_coarse = coarse_tokens[i*max_coarse:(i+1)*max_coarse]
+                else:
+                    break
+        
+        coarse_tokens = coarse_tokens[:coarselength]
+        fine_tokens = fine_tokens[:finelength]
+        
+        return coarse_tokens, fine_tokens

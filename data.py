@@ -44,7 +44,7 @@ class LibriDataset(Dataset):
 
 class TokensDataset(Dataset):
 
-    def __init__(self, rootTokenDir, tokenFile, Q = 8, Q_prime = 3, sampleRate = 16000, mode = "semantic", removeSemanticDuplicates = True, row_limit = None, expected_audio_length = 60, crop_length = [30,10,3]):
+    def __init__(self, rootTokenDir, tokenFile, Q = 8, Q_prime = 3, sampleRate = 16000, mode = "semantic", removeSemanticDuplicates = True, row_limit = None, expected_audio_length = 60, crop_length = [30,10,3], removeOffset = False):
 
         self.validateParameters(rootTokenDir, tokenFile, mode, sampleRate)
         self.rootTokenDir = rootTokenDir
@@ -53,6 +53,7 @@ class TokensDataset(Dataset):
         self.mode = mode
         self.removeSemanticDuplicates = removeSemanticDuplicates
         self.row_limit = row_limit
+        self.removeOffset = removeOffset
 
         # expressed in seconds, they define the expected duration of input audio and the crop length in the three different modes (semantic, coarse and  fine)
         
@@ -165,7 +166,8 @@ class TokensDataset(Dataset):
                                     processedCell, _ = TokensDataset.__removeDuplicates(cell[j * N :(j + 1) * N])
                                 else:
                                     processedCell = cell[j * N :(j + 1) * N]
-                                    processedCell = [elem % 1024 for elem in processedCell]
+                                    if self.removeOffset:
+                                        processedCell = [elem % 1024 for elem in processedCell]
                                     
                                 sampled_row.append(processedCell)
 
@@ -288,6 +290,28 @@ def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckp
 
     return fileCount
 
+def prepare_single_audio(path, w2vBERT, soundStream, audioDuration, Q = 8, Q_prime = 3, removeOffset = False):
+
+    semanticlength = int(50 * audioDuration - 1)
+    coarselength = int((50 * audioDuration + 1) * Q_prime) 
+    finelength = int((50 * audioDuration + 1) * (Q - Q_prime))
+
+    waveform, sr = torchaudio.load(path)
+    with torch.no_grad():
+        semanticTokens, _ = w2vBERT(waveform)
+        coarseTokens, fineTokens = audio_to_tokens(waveform, soundStream)
+        
+    semanticTokens = torch.tensor(semanticTokens)
+    semanticTokens = semanticTokens[:semanticlength]
+    coarseTokens = coarseTokens[:coarselength]
+    fineTokens = fineTokens[:finelength]
+
+    if removeOffset:
+        semanticTokens = semanticTokens % 1024
+        coarseTokens = coarseTokens % 1024
+        fineTokens = fineTokens % 1024
+
+    return semanticTokens, coarseTokens, fineTokens
 
 def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5, subset = "10h", lenght = None):
     Path(outDir).mkdir(parents=True, exist_ok=True)

@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import torchaudio
 import os
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader, random_split
 from torchaudio.transforms import Resample
 from pathlib import Path
 import csv
@@ -13,6 +13,7 @@ from SoundStream import audio_to_tokens
 import re
 from torchaudio.datasets import LibriLightLimited
 import sys
+
 
 myDevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class LibriDataset(Dataset):
@@ -394,3 +395,23 @@ def prepare_csv_size():
             break
         except OverflowError:
             maxInt = int(maxInt/10)
+
+def getSingleModelDataLoaders(mode, tokenPath = "out", tokenFile = "out.csv", expected_audio_length = 30, crop_length = [30,10,3], removeOffset=False, random_percentage = 0.8):
+
+    model_classes = ["semantic", "coarse", "fine"]
+    if mode not in model_classes:
+        raise ValueError(f"Invalid model type: {mode}.\nChoose from 'semantic', 'coarse', or 'fine'.")
+    
+    dataset = TokensDataset(tokenPath, tokenFile, mode = mode, expected_audio_length = expected_audio_length, crop_length = crop_length, removeOffset=removeOffset)
+    train_dataset, valid_dataset = random_split(dataset, [random_percentage, 1 - random_percentage])
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=16, shuffle=False)
+    return train_loader, valid_loader
+
+def getAllDataLoaders(tokenPath = "out", tokenFile = "out.csv", expected_audio_length = 30, crop_length = [30,10,3], removeOffset=False, random_percentage = 0.8):
+
+    semantic_set = getSingleModelDataLoaders(mode="semantic", tokenPath=tokenPath, tokenFile=tokenFile, expected_audio_length=expected_audio_length, crop_length=crop_length, removeOffset=removeOffset, random_percentage=random_percentage)
+    coarse_set = getSingleModelDataLoaders(mode="coarse", tokenPath=tokenPath, tokenFile=tokenFile, expected_audio_length=expected_audio_length, crop_length=crop_length, removeOffset=removeOffset, random_percentage=random_percentage)
+    fine_set = getSingleModelDataLoaders(mode="fine", tokenPath=tokenPath, tokenFile=tokenFile, expected_audio_length=expected_audio_length, crop_length=crop_length, removeOffset=removeOffset, random_percentage=random_percentage)
+
+    return semantic_set, coarse_set, fine_set

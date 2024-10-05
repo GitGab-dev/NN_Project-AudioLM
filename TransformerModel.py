@@ -5,6 +5,7 @@ from torch.optim import Adam
 import pytorch_lightning as pl
 from typing import List
 import tqdm
+import os
 
 class RelativePosition(nn.Module):
 
@@ -470,3 +471,87 @@ def generate_new_sequence(semantic_tokens, coarse_tokens, fine_tokens, semantic_
         fine_tokens = fine_tokens[:finelength]
         
         return coarse_tokens, fine_tokens
+    
+def createSingleModel(type, checkpoint_path = None,  d_model=1024, num_layers=12, num_heads=16, dim_feedforward=4096, dropout=0.1, audioDuration=3, Q_prime=3, Q=8, vocab_size=None, learning_rate=10e-4, myDevice=torch.device("cpu")):
+    
+    model_classes = {
+        'semantic': SemanticTransformer,
+        'coarse': CoarseTransformer,
+        'fine': FineTransformer
+    }
+    if type not in model_classes:
+        raise ValueError(f"Invalid model type: {type}.\nChoose from 'semantic', 'coarse', or 'fine'.")
+    
+    total_vocab_size = {
+        'semantic': 1024,
+        'coarse': 1024,
+        'fine': 8192      
+    }
+
+    vocab_size = vocab_size if vocab_size is not None else total_vocab_size[type]
+
+    common_params = {
+        'd_model': d_model,
+        'num_layers': num_layers,
+        'num_heads': num_heads,
+        'k': int(d_model / num_heads),
+        'dim_feedforward': dim_feedforward,
+        'audioDuration': audioDuration,
+        'vocab_size': vocab_size,
+        'dropout': dropout,
+        'learning_rate': learning_rate,
+        'myDevice': myDevice
+    }
+
+    extra_params = {
+        'semantic': {},
+        'coarse': {'Q_prime': Q_prime},
+        'fine': {'Q': Q, 'Q_prime': Q_prime}
+    }
+
+    model_class = model_classes[type]
+    model_extra_params = extra_params.get(type, {})
+
+    if os.path.exists(checkpoint_path):
+        print(f"Checkpoint found at {checkpoint_path}. Resuming old model...")
+        model = model_class.load_from_checkpoint(checkpoint_path, **common_params, **model_extra_params)
+    else:
+        print("No checkpoint found. Starting from scratch...")
+        model = model_class(**common_params, **model_extra_params)
+
+    return model
+
+def createAllModels(semantic_checkpoint = None, coarse_checkpoint = None, fine_checkpoint = None,  d_model=1024, num_layers=12, num_heads=16, dim_feedforward=4096, dropout=0.1, audioDuration=[30,10,3], Q_prime=3, Q=8, vocab_size=[1024, 1024, 8192], learning_rate=10e-4, myDevice=torch.device("cpu")):
+    
+    if len(audioDuration) < 3:
+        raise ValueError(f"Invalid audioDuration format: {len(audioDuration)}.\nWrite a three values array.")    
+    if len(vocab_size) < 3:
+        raise ValueError(f"Invalid vocabSize format: {len(vocab_size)}.\nWrite a three values array.")
+    
+    params = {
+        'd_model': d_model,
+        'num_layers': num_layers,
+        'num_heads': num_heads,
+        'dim_feedforward': dim_feedforward,
+        'audioDuration': audioDuration[0],
+        'vocab_size': vocab_size[0],
+        'dropout': dropout,
+        'learning_rate': learning_rate,
+        'myDevice': myDevice,
+        'Q_prime' : Q_prime,
+        'Q' : Q
+    }
+
+    semanticModel = createSingleModel(type="semantic", checkpoint_path=semantic_checkpoint, **params)
+
+    params['audioDuration'] = audioDuration[1]
+    params['vocab_size'] = vocab_size[1]
+
+    coarseModel = createSingleModel(type="coarse", checkpoint_path=coarse_checkpoint, **params)
+
+    params['audioDuration'] = audioDuration[2]
+    params['vocab_size'] = vocab_size[2]
+
+    fineModel = createSingleModel(type="fine", checkpoint_path=fine_checkpoint, **params)
+
+    return semanticModel, coarseModel, fineModel

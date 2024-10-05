@@ -483,7 +483,7 @@ def createSingleModel(type, checkpoint_path = None,  d_model=1024, num_layers=12
         raise ValueError(f"Invalid model type: {type}.\nChoose from 'semantic', 'coarse', or 'fine'.")
     
     total_vocab_size = {
-        'semantic': 1024,
+        'semantic': 500,
         'coarse': 1024,
         'fine': 8192      
     }
@@ -521,7 +521,7 @@ def createSingleModel(type, checkpoint_path = None,  d_model=1024, num_layers=12
 
     return model
 
-def createAllModels(semantic_checkpoint = None, coarse_checkpoint = None, fine_checkpoint = None,  d_model=1024, num_layers=12, num_heads=16, dim_feedforward=4096, dropout=0.1, audioDuration=[30,10,3], Q_prime=3, Q=8, vocab_size=[1024, 1024, 8192], learning_rate=10e-4, myDevice=torch.device("cpu")):
+def createAllModels(semantic_checkpoint = None, coarse_checkpoint = None, fine_checkpoint = None,  d_model=1024, num_layers=12, num_heads=16, dim_feedforward=4096, dropout=0.1, audioDuration=[30,10,3], Q_prime=3, Q=8, vocab_size=[500, 1024, 8192], learning_rate=10e-4, myDevice=torch.device("cpu")):
     
     if len(audioDuration) < 3:
         raise ValueError(f"Invalid audioDuration format: {len(audioDuration)}.\nWrite a three values array.")    

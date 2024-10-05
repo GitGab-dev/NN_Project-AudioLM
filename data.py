@@ -45,7 +45,7 @@ class LibriDataset(Dataset):
 
 class TokensDataset(Dataset):
 
-    def __init__(self, rootTokenDir, tokenFile, Q = 8, Q_prime = 3, sampleRate = 16000, mode = "semantic", removeSemanticDuplicates = True, row_limit = None, expected_audio_length = 60, crop_length = [30,10,3], removeOffset = False):
+    def __init__(self, rootTokenDir, tokenFile, Q = 8, Q_prime = 3, sampleRate = 16000, mode = "semantic", removeSemanticDuplicates = True, row_limit = None, expected_audio_length = 60, crop_length = [30,10,3], useOffset = True):
 
         self.validateParameters(rootTokenDir, tokenFile, mode, sampleRate)
         self.rootTokenDir = rootTokenDir
@@ -54,7 +54,7 @@ class TokensDataset(Dataset):
         self.mode = mode
         self.removeSemanticDuplicates = removeSemanticDuplicates
         self.row_limit = row_limit
-        self.removeOffset = removeOffset
+        self.useOffset = useOffset
 
         # expressed in seconds, they define the expected duration of input audio and the crop length in the three different modes (semantic, coarse and  fine)
         
@@ -167,7 +167,7 @@ class TokensDataset(Dataset):
                                     processedCell, _ = TokensDataset.__removeDuplicates(cell[j * N :(j + 1) * N])
                                 else:
                                     processedCell = cell[j * N :(j + 1) * N]
-                                    if self.removeOffset:
+                                    if not self.useOffset:
                                         processedCell = [elem % 1024 for elem in processedCell]
                                     
                                 sampled_row.append(processedCell)
@@ -291,7 +291,7 @@ def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckp
 
     return fileCount
 
-def prepare_single_audio(path, w2vBERT, soundStream, audioDuration, Q = 8, Q_prime = 3, removeOffset = False):
+def prepare_single_audio(path, w2vBERT, soundStream, audioDuration, Q = 8, Q_prime = 3, useOffset = True):
 
     semanticlength = int(50 * audioDuration - 1)
     coarselength = int((50 * audioDuration + 1) * Q_prime) 
@@ -307,7 +307,7 @@ def prepare_single_audio(path, w2vBERT, soundStream, audioDuration, Q = 8, Q_pri
     coarseTokens = coarseTokens[:coarselength]
     fineTokens = fineTokens[:finelength]
 
-    if removeOffset:
+    if not useOffset:
         semanticTokens = semanticTokens % 1024
         coarseTokens = coarseTokens % 1024
         fineTokens = fineTokens % 1024
@@ -396,22 +396,22 @@ def prepare_csv_size():
         except OverflowError:
             maxInt = int(maxInt/10)
 
-def getSingleModelDataLoaders(mode, tokenPath = "out", tokenFile = "out.csv", expected_audio_length = 30, crop_length = [30,10,3], removeOffset=False, random_percentage = 0.8):
+def getSingleModelDataLoaders(mode, tokenPath = "out", tokenFile = "out.csv", expected_audio_length = 30, crop_length = [30,10,3], useOffset=True, training_percentage = 0.8, batch_size = 16):
 
     model_classes = ["semantic", "coarse", "fine"]
     if mode not in model_classes:
         raise ValueError(f"Invalid model type: {mode}.\nChoose from 'semantic', 'coarse', or 'fine'.")
     
-    dataset = TokensDataset(tokenPath, tokenFile, mode = mode, expected_audio_length = expected_audio_length, crop_length = crop_length, removeOffset=removeOffset)
-    train_dataset, valid_dataset = random_split(dataset, [random_percentage, 1 - random_percentage])
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    valid_loader = DataLoader(valid_dataset, batch_size=16, shuffle=False)
+    dataset = TokensDataset(tokenPath, tokenFile, mode = mode, expected_audio_length = expected_audio_length, crop_length = crop_length, useOffset=useOffset)
+    train_dataset, valid_dataset = random_split(dataset, [training_percentage, 1 - training_percentage])
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
     return train_loader, valid_loader
 
-def getAllDataLoaders(tokenPath = "out", tokenFile = "out.csv", expected_audio_length = 30, crop_length = [30,10,3], removeOffset=False, random_percentage = 0.8):
+def getAllDataLoaders(tokenPath = "out", tokenFile = "out.csv", expected_audio_length = 30, crop_length = [30,10,3], useOffset=True, training_percentage = 0.8, batch_size = 16):
 
-    semantic_set = getSingleModelDataLoaders(mode="semantic", tokenPath=tokenPath, tokenFile=tokenFile, expected_audio_length=expected_audio_length, crop_length=crop_length, removeOffset=removeOffset, random_percentage=random_percentage)
-    coarse_set = getSingleModelDataLoaders(mode="coarse", tokenPath=tokenPath, tokenFile=tokenFile, expected_audio_length=expected_audio_length, crop_length=crop_length, removeOffset=removeOffset, random_percentage=random_percentage)
-    fine_set = getSingleModelDataLoaders(mode="fine", tokenPath=tokenPath, tokenFile=tokenFile, expected_audio_length=expected_audio_length, crop_length=crop_length, removeOffset=removeOffset, random_percentage=random_percentage)
+    semantic_set = getSingleModelDataLoaders(mode="semantic", tokenPath=tokenPath, tokenFile=tokenFile, expected_audio_length=expected_audio_length, crop_length=crop_length, useOffset=useOffset, training_percentage=training_percentage, batch_size=batch_size)
+    coarse_set = getSingleModelDataLoaders(mode="coarse", tokenPath=tokenPath, tokenFile=tokenFile, expected_audio_length=expected_audio_length, crop_length=crop_length, useOffset=useOffset, training_percentage=training_percentage, batch_size=batch_size)
+    fine_set = getSingleModelDataLoaders(mode="fine", tokenPath=tokenPath, tokenFile=tokenFile, expected_audio_length=expected_audio_length, crop_length=crop_length, useOffset=useOffset, training_percentage=training_percentage, batch_size=batch_size)
 
     return semantic_set, coarse_set, fine_set

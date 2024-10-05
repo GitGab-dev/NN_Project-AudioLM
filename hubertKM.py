@@ -23,12 +23,6 @@ class SemanticTokenizer(nn.Module):
     def forward(self, x):
         embeddings = self.embedder(x, output_hidden_states = True).hidden_states[self.chosenOutputLevel].squeeze()
         
-        # Normalize embeddings (not possible with pretrained models)
-        
-        #mean = embeddings.mean(dim=1, keepdim=True)
-        #std = embeddings.std(dim=1, keepdim=True)
-        #normalizedEmbeddings = (embeddings - mean) / std
-        
         normalizedEmbeddings = embeddings
 
         # Predict semantic tokens

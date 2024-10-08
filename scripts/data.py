@@ -351,9 +351,13 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
 
     tokenData = []
     fileCount = 0
+    
+    print("Downloading dataset...")
 
     Path("./librilight").mkdir(parents=True, exist_ok=True)
     dataset = LibriLightLimited("./librilight", download=True, subset= subset)
+    
+    print("Writing tokens...")
 
     indices = list(range(len(dataset)))
     if lenght != None:

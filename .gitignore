@@ -1,6 +1,5 @@
 /env
 /hubertKM
-/checkpoints
 .ipynb_checkpoints
 /__pycache__
 /out
@@ -11,4 +10,5 @@ losses.csv
 /out-1h
 /data_cut
 /small_cut
+/scripts/__pycache__
 

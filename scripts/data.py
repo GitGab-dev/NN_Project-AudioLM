@@ -1,19 +1,20 @@
 import torch
 import torch.nn.functional as F
 import torchaudio
-import os
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchaudio.transforms import Resample
+from torchaudio.datasets import LibriLightLimited
+
+import os
 from pathlib import Path
 import csv
 from tqdm import tqdm
 import ast
 import random
-from SoundStream import audio_to_tokens
 import re
-from torchaudio.datasets import LibriLightLimited
 import sys
 
+from scripts.SoundStream import audio_to_tokens
 
 myDevice = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class LibriDataset(Dataset):
@@ -25,7 +26,7 @@ class LibriDataset(Dataset):
 
     def getAudioList(self,audioDir):
         flac_files = []
-        for root, dirs, files in os.walk(audioDir):
+        for root, _ , files in os.walk(audioDir):
             for file in files:
                 if file.endswith(".flac"):
                     file_path = os.path.join(root, file)
@@ -37,7 +38,7 @@ class LibriDataset(Dataset):
         return len(self.audioList)
 
     def __getitem__(self, idx):
-        waveform, sampleRate = torchaudio.load(self.audioList[idx])
+        waveform, _ = torchaudio.load(self.audioList[idx])
         waveformResampled = self.resampler(waveform)
         waveformPadded = F.pad(waveformResampled, pad = (0,self.maxlength - len(waveformResampled[0])))
         
@@ -59,7 +60,7 @@ class TokensDataset(Dataset):
         # expressed in seconds, they define the expected duration of input audio and the crop length in the three different modes (semantic, coarse and  fine)
         
         self.expected_audio_length = expected_audio_length
-        self.expected_crop_length = crop_length # CHANGE ME
+        self.expected_crop_length = crop_length
 
         match mode:
         
@@ -90,6 +91,7 @@ class TokensDataset(Dataset):
         self.inputs, self.labels = self.createTokenList()
 
     def validateParameters(self, rootTokenDir, tokenFile, mode, sampleRate):
+        
 
         if not os.path.exists(os.path.join(rootTokenDir, tokenFile)):
             raise ValueError("Invalid rootTokenDir. It should be a valid directory path.")
@@ -125,7 +127,7 @@ class TokensDataset(Dataset):
             if not skipSep:
                 sep = next(reader, None)
 
-            header = next(reader, None)
+            _ = next(reader, None)
 
             inputs = []
             labels = []
@@ -249,11 +251,11 @@ def storeTokens(audioDir, outDir, outFile, w2vBERT, soundStream, fileCountCheckp
     fileCount = 0
 
     totalFiles = 0
-    for root, dirs, files in os.walk(audioDir):
+    for root, _, files in os.walk(audioDir):
         totalFiles += len(files)
 
     with tqdm(total=totalFiles, desc='Processing files') as pbar:
-        for root, dirs, files in os.walk(audioDir):
+        for root, _, files in os.walk(audioDir):
             for file in files:
     
                 reachedCheckpoint = (fileChecked == 0 or file == lastFile or reachedCheckpoint)
@@ -315,6 +317,21 @@ def prepare_single_audio(path, w2vBERT, soundStream, audioDuration, Q = 8, Q_pri
     return semanticTokens, coarseTokens, fineTokens
 
 def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5, subset = "10h", lenght = None):
+    """gets audio data from librilight reduced dataset, and stores them into a CSV file as tokens
+
+    Args:
+        outDir (PathString): directory path where to save the outfile
+        outFile (FileName): output CSV file name
+        w2vBERT (SemanticTokenizer): w2vBERT model instance
+        soundStream (SoundStream): SoundStream model instance
+        fileCountCheckpoint (int, optional): file count to save a file checkpoint on. Defaults to 5.
+        subset (str, optional): dataset time portion. Defaults to "10h". Valid values are "10m","1h" or "10h".
+        lenght (int, optional): hour value portion limit. Defaults to None.
+
+    Returns:
+        int: how many audio files have been successfully saved
+    """
+    
     Path(outDir).mkdir(parents=True, exist_ok=True)
 
     isNewFile = not os.path.exists(os.path.join(outDir, outFile))
@@ -329,7 +346,7 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
             
             fileChecked, lastFileSP, lastFileCH, lastFileUT = checkpointFile.readline().strip().split(" ")
             fileChecked = int(fileChecked)
-            lastFile = f"{lastFileSP} {lastFileSP} {lastFileUT}"
+            lastFile = f"{lastFileSP} {lastFileCH} {lastFileUT}"
             print("Found a checkpoint!")
 
     tokenData = []
@@ -345,7 +362,7 @@ def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckp
         currentLenght = 0
         neededLenght = lenght * 60 * 60
     for i in indices:
-        waveform, sr, transcript, spid, chid, utid = dataset[i]
+        waveform, sr, _, spid, chid, utid = dataset[i]
         file = f"{spid} {chid} {utid}"
         reachedCheckpoint = (fileChecked == 0 or file == lastFile or reachedCheckpoint)
         
@@ -397,6 +414,24 @@ def prepare_csv_size():
             maxInt = int(maxInt/10)
 
 def getSingleModelDataLoaders(mode, tokenPath = "out", tokenFile = "out.csv", expected_audio_length = 30, crop_length = [30,10,3], useOffset=True, training_percentage = 0.8, batch_size = 16):
+    """get the dataloaders for a specific mode
+
+    Args:
+        mode (str): type of dataset structure needed. Admitted values are 'semantic', 'coarse', or 'fine'.
+        tokenPath (str, optional): path to output folder. Defaults to "out".
+        tokenFile (str, optional): output file name. Defaults to "out.csv".
+        expected_audio_length (int, optional): length of original audio in seconds. Defaults to 30.
+        crop_length (list, optional): crop duration for the three modes. Defaults to [30,10,3].
+        useOffset (bool, optional): set if acoustic tokens uses offsets. Defaults to True.
+        training_percentage (float, optional): percentage of data dedicated to training. Defaults to 0.8.
+        batch_size (int, optional): how many data per batch. Defaults to 16.
+
+    Raises:
+        ValueError: error for choosing an invalid mode
+
+    Returns:
+        Tuple(DataLoader,DataLoader): dataloaders for training and validation
+    """
 
     model_classes = ["semantic", "coarse", "fine"]
     if mode not in model_classes:

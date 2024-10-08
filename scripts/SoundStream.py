@@ -1,8 +1,12 @@
 from typing import Tuple, List, Optional
+from itertools import chain
+import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import init
+import torchaudio
 try:
     import pytorch_lightning as pl
 except ImportError:
@@ -12,9 +16,6 @@ except ImportError:
 
         class Callback:
             pass
-from itertools import chain
-import random
-import torchaudio
 
 class ResNet1d(nn.Module):
     def __init__(
@@ -334,6 +335,17 @@ def divide_tokens(full_token_list, Q = 8, Q_prime = 3):
     return coarse_token_list, fine_token_list
 
 def audio_to_tokens(audio_wave, model, Q = 8, Q_prime = 3):
+    """Convert an audio waveform into Acoustic tokens
+
+    Args:
+        audio_wave (Waveform): audio input waveform
+        model (SoundStreamModel): an instance of SoundStream model 
+        Q (int, optional): number of quantizers used. Defaults to 8.
+        Q_prime (int, optional): number of quantizer reserved to Coarse tokens. Defaults to 3.
+
+    Returns:
+        Tuple(TokenList,TokenList): Coarse acoustic tokens and Fine acoustic tokens
+    """
 
     #y = encode_audio(audio_wave, sample_rate, model, start, duration)
     with torch.no_grad():
@@ -344,6 +356,20 @@ def audio_to_tokens(audio_wave, model, Q = 8, Q_prime = 3):
     return divide_tokens(full_token_list, Q, Q_prime)
 
 def tokens_to_audio(coarse_tokens, fine_tokens, model, removeOffsets = True, Q = 8, Q_prime = 3, N = 1024):
+    """Convert acoustic tokens into an audio waveform
+
+    Args:
+        coarse_tokens (TokenList): list of coarse tokens
+        fine_tokens (TokenList): list of fine tokens
+        model (SoundStream): soundstream model instance
+        removeOffsets (bool, optional): remove offsets from token values. Defaults to True.
+        Q (int, optional): number of quantizer. Defaults to 8.
+        Q_prime (int, optional): number of quantizer reserved to Coarse tokens. Defaults to 3.
+        N (int, optional): vocabulary size without offsets. Defaults to 1024.
+
+    Returns:
+        Waveform: decoded audio waveform
+    """
     
     coarse_shaped, fine_shaped = coarse_tokens.reshape((-1,Q_prime)),fine_tokens.reshape((-1,Q - Q_prime))
     embedding = torch.hstack((coarse_shaped, fine_shaped)).reshape((1,-1,Q))

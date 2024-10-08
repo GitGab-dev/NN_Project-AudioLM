@@ -6,7 +6,8 @@ lightning
 soundfile
 progressbar
 matplotlib
-tqdm
 huggingface-hub
+ipywidgets
+tqdm
 transformers>=4.37.2
 scikit-learn

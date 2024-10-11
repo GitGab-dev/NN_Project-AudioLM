@@ -371,6 +371,8 @@ def tokens_to_audio(coarse_tokens, fine_tokens, model, removeOffsets = True, Q =
         Waveform: decoded audio waveform
     """
     
+    coarse_shaped.to("cpu")
+    fine_shaped.to("cpu")
     coarse_shaped, fine_shaped = coarse_tokens.reshape((-1,Q_prime)),fine_tokens.reshape((-1,Q - Q_prime))
     embedding = torch.hstack((coarse_shaped, fine_shaped)).reshape((1,-1,Q))
 

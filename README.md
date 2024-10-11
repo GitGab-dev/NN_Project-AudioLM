@@ -7,7 +7,7 @@ Re-implementation of AudioLM: a Language Modeling Approach to Audio Generation, 
 
 ## How to install in local
 
-The code had been tested in local with Python 3.10 environment. You can clone the repository and install the requirements.
+We suggests using Colab, but the code had been tested in local with a Python 3.10 environment. You can clone the repository and install the requirements.
 
 ```bash
   git clone https://github.com/GitGab-dev/NN_Project-AudioLM

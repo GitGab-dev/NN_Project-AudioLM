@@ -47,12 +47,14 @@ def modelFit(model, trainer, train_loader, valid_loader = None, checkpoint_path 
         checkpoint_path (Path, optional): path to .ckpt file. Defaults to None.
     """
         
-    model.train()
-    if os.path.exists(checkpoint_path):
-        print(f"Checkpoint found at {checkpoint_path}. Resuming training...")
-        trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=valid_loader, ckpt_path=checkpoint_path)
-    else:
-        print("No checkpoint found. Starting from scratch...")
-        trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
-    
-    model.to(myDevice)
+    try:
+        model.train()
+        if os.path.exists(checkpoint_path):
+            print(f"Checkpoint found at {checkpoint_path}. Resuming training...")
+            trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=valid_loader, ckpt_path=checkpoint_path)
+        else:
+            print("No checkpoint found. Starting from scratch...")
+            trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+            
+    finally:
+        model.to(myDevice)

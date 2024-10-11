@@ -314,7 +314,7 @@ def prepare_single_audio(path, w2vBERT, soundStream, audioDuration, Q = 8, Q_pri
         coarseTokens = coarseTokens % 1024
         fineTokens = fineTokens % 1024
 
-    return semanticTokens, coarseTokens, fineTokens
+    return semanticTokens.to(myDevice), coarseTokens.to(myDevice), fineTokens.to(myDevice)
 
 def store_from_librilight(outDir, outFile, w2vBERT, soundStream, fileCountCheckpoint = 5, subset = "10h", lenght = None):
     """gets audio data from librilight reduced dataset, and stores them into a CSV file as tokens

@@ -35,7 +35,7 @@ def setAllTrainers(max_epoch_sem = 30, max_epoch_coarse = 30, max_epoch_fine = 3
     
     return semantic_trainer, coarse_trainer, fine_trainer
 
-def modelFit(model, trainer, train_loader, valid_loader = None, checkpoint_path = None):
+def modelFit(model, trainer, train_loader, valid_loader = None, checkpoint_path = None, myDevice = "cpu"):
     
     """check if exists a train checkpoint and starts training
 
@@ -54,3 +54,5 @@ def modelFit(model, trainer, train_loader, valid_loader = None, checkpoint_path 
     else:
         print("No checkpoint found. Starting from scratch...")
         trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+    
+    model.to(myDevice)
